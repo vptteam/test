@@ -6,7 +6,7 @@ namespace Services\Escrow;
 
 use Core\Database;
 use Core\Logger;
-use Models\Escrow;
+use Modules\Escrow\Models\Escrow;
 use Services\Payments\PaystackGateway;
 use Throwable;
 
