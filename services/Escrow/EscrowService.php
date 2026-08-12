@@ -344,120 +344,747 @@ class EscrowService
     }
 
 
-    /*
-    |--------------------------------------------------------------------------
-    | CREATE ESCROW
-    |--------------------------------------------------------------------------
-    */
+/**
+ * ---------------------------------------------------------
+ * CREATE ESCROW
+ * ---------------------------------------------------------
+ *
+ * Creates an escrow transaction from an existing listing.
+ *
+ * IMPORTANT:
+ *
+ * - $listingId must be the internal listings.id
+ * - $buyerId must be the internal users.id
+ * - Seller is resolved from the listing
+ * - Amount is resolved from the listing
+ * - The Escrow model remains responsible for the INSERT
+ * - No escrow_number column is used
+ * - The public escrow identifier is "reference"
+ *
+ * ---------------------------------------------------------
+ */
+public function create(
+    int $listingId,
+    int $buyerId
+): ?array {
 
-    public function create(
-        int $listingId,
-        int $buyerId
-    ): ?array {
+    try {
 
-        try {
-
-            Logger::write(
-                'escrow_service',
-                [
-                    'step'       => 'CREATE_START',
-                    'listing_id' => $listingId,
-                    'buyer_id'   => $buyerId
-                ]
-            );
-
-
-            if ($listingId <= 0) {
-
-                Logger::write(
-                    'escrow_service_error',
-                    [
-                        'step' => 'INVALID_LISTING_ID',
-                        'listing_id' => $listingId
-                    ]
-                );
-
-                return null;
-            }
-
-
-            if ($buyerId <= 0) {
-
-                Logger::write(
-                    'escrow_service_error',
-                    [
-                        'step' => 'INVALID_BUYER_ID',
-                        'buyer_id' => $buyerId
-                    ]
-                );
-
-                return null;
-            }
+        Logger::write(
+            'escrow_service',
+            [
+                'step' => 'CREATE_START',
+                'listing_id' => $listingId,
+                'buyer_id' => $buyerId
+            ]
+        );
 
 
-            /*
-            |--------------------------------------------------------------------------
-            | Delegate actual escrow creation to model
-            |--------------------------------------------------------------------------
-            |
-            | We deliberately do not invent a model method here.
-            | The existing Escrow model remains responsible for the
-            | database-specific creation operation.
-            |
-            */
+        /*
+        |--------------------------------------------------------------------------
+        | Validate IDs
+        |--------------------------------------------------------------------------
+        */
 
-            if (!method_exists(
-                $this->escrow,
-                'create'
-            )) {
-
-                Logger::write(
-                    'escrow_service_error',
-                    [
-                        'step' =>
-                            'ESCROW_MODEL_CREATE_METHOD_MISSING'
-                    ]
-                );
-
-                return null;
-            }
-
-
-            $result = $this->escrow->create(
-                $listingId,
-                $buyerId
-            );
-
-
-            Logger::write(
-                'escrow_service',
-                [
-                    'step'   => 'CREATE_RESULT',
-                    'result' => $result
-                ]
-            );
-
-
-            return is_array($result)
-                ? $result
-                : null;
-
-
-        } catch (Throwable $e) {
+        if ($listingId <= 0) {
 
             Logger::write(
                 'escrow_service_error',
                 [
-                    'step'    => 'CREATE_EXCEPTION',
-                    'message' => $e->getMessage(),
-                    'line'    => $e->getLine(),
-                    'file'    => $e->getFile()
+                    'step' => 'CREATE_INVALID_LISTING_ID',
+                    'listing_id' => $listingId,
+                    'buyer_id' => $buyerId
                 ]
             );
 
             return null;
         }
+
+
+        if ($buyerId <= 0) {
+
+            Logger::write(
+                'escrow_service_error',
+                [
+                    'step' => 'CREATE_INVALID_BUYER_ID',
+                    'listing_id' => $listingId,
+                    'buyer_id' => $buyerId
+                ]
+            );
+
+            return null;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Load Listing
+        |--------------------------------------------------------------------------
+        */
+
+        $listing =
+            $this->listingModel->find(
+                $listingId
+            );
+
+
+        Logger::write(
+            'escrow_service',
+            [
+                'step' => 'CREATE_LISTING_LOOKUP',
+                'listing_id' => $listingId,
+                'found' => is_array($listing)
+            ]
+        );
+
+
+        if (
+            !is_array($listing)
+            ||
+            empty($listing)
+        ) {
+
+            Logger::write(
+                'escrow_service_error',
+                [
+                    'step' => 'CREATE_LISTING_NOT_FOUND',
+                    'listing_id' => $listingId,
+                    'buyer_id' => $buyerId
+                ]
+            );
+
+            return null;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Resolve Seller
+        |--------------------------------------------------------------------------
+        */
+
+        $sellerId =
+            (int)(
+                $listing['seller_id']
+                ??
+                $listing['user_id']
+                ??
+                0
+            );
+
+
+        if ($sellerId <= 0) {
+
+            Logger::write(
+                'escrow_service_error',
+                [
+                    'step' => 'CREATE_SELLER_NOT_FOUND',
+                    'listing_id' => $listingId,
+                    'buyer_id' => $buyerId,
+                    'listing' => $listing
+                ]
+            );
+
+            return null;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Prevent Buyer From Buying Own Listing
+        |--------------------------------------------------------------------------
+        */
+
+        if ($sellerId === $buyerId) {
+
+            Logger::write(
+                'escrow_service_error',
+                [
+                    'step' => 'CREATE_SELF_PURCHASE_BLOCKED',
+                    'listing_id' => $listingId,
+                    'buyer_id' => $buyerId,
+                    'seller_id' => $sellerId
+                ]
+            );
+
+            return [
+                'success' => false,
+                'message' =>
+                    'You cannot create an escrow transaction for your own listing.'
+            ];
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Resolve Amount
+        |--------------------------------------------------------------------------
+        */
+
+        $amount =
+            $listing['price']
+            ??
+            $listing['amount']
+            ??
+            $listing['selling_price']
+            ??
+            $listing['total_amount']
+            ??
+            null;
+
+
+        if (
+            $amount === null
+            ||
+            !is_numeric($amount)
+            ||
+            (float)$amount <= 0
+        ) {
+
+            Logger::write(
+                'escrow_service_error',
+                [
+                    'step' => 'CREATE_INVALID_AMOUNT',
+                    'listing_id' => $listingId,
+                    'buyer_id' => $buyerId,
+                    'seller_id' => $sellerId,
+                    'amount' => $amount
+                ]
+            );
+
+            return [
+                'success' => false,
+                'message' =>
+                    'Listing has an invalid amount.'
+            ];
+        }
+
+
+        $amount =
+            (float)$amount;
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Currency
+        |--------------------------------------------------------------------------
+        */
+
+        $currency =
+            strtoupper(
+                trim(
+                    (string)(
+                        $listing['currency']
+                        ??
+                        'NGN'
+                    )
+                )
+            );
+
+
+        if ($currency === '') {
+
+            $currency = 'NGN';
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Buyer Phone
+        |--------------------------------------------------------------------------
+        */
+
+        $buyer =
+            $this->userModel->find(
+                $buyerId
+            );
+
+
+        $buyerPhone =
+            trim(
+                (string)(
+                    $buyer['phone']
+                    ??
+                    $buyer['phone_number']
+                    ??
+                    ''
+                )
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Seller Phone
+        |--------------------------------------------------------------------------
+        */
+
+        $seller =
+            $this->userModel->find(
+                $sellerId
+            );
+
+
+        $sellerPhone =
+            trim(
+                (string)(
+                    $seller['phone']
+                    ??
+                    $seller['phone_number']
+                    ??
+                    ''
+                )
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Generate Escrow Reference
+        |--------------------------------------------------------------------------
+        |
+        | Do NOT use escrow_number.
+        |
+        | The existing Escrow model uses "reference".
+        |
+        */
+
+        $reference =
+            $this->generateReference();
+
+
+        Logger::write(
+            'escrow_service',
+            [
+                'step' => 'CREATE_REFERENCE_GENERATED',
+                'reference' => $reference,
+                'listing_id' => $listingId,
+                'buyer_id' => $buyerId,
+                'seller_id' => $sellerId
+            ]
+        );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Escrow Fee
+        |--------------------------------------------------------------------------
+        |
+        | Keep the default fee at zero unless your existing service
+        | already has a configured fee calculation method.
+        |
+        */
+
+        $escrowFee = 0.0;
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Seller Amount
+        |--------------------------------------------------------------------------
+        */
+
+        $sellerAmount =
+            max(
+                0,
+                $amount - $escrowFee
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Listing / Item Name
+        |--------------------------------------------------------------------------
+        */
+
+        $item =
+            $listing['title']
+            ??
+            $listing['item_name']
+            ??
+            $listing['item']
+            ??
+            $listing['description']
+            ??
+            'Escrow Transaction';
+
+
+        $item =
+            trim(
+                (string)$item
+            );
+
+
+        if ($item === '') {
+
+            $item = 'Escrow Transaction';
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Delivery Type
+        |--------------------------------------------------------------------------
+        */
+
+        $deliveryType =
+            trim(
+                (string)(
+                    $listing['delivery_type']
+                    ??
+                    'standard'
+                )
+            );
+
+
+        if ($deliveryType === '') {
+
+            $deliveryType = 'standard';
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Location
+        |--------------------------------------------------------------------------
+        |
+        | Only included if your model/table supports it.
+        | The current model may not require it.
+        |
+        */
+
+        $location =
+            trim(
+                (string)(
+                    $listing['location']
+                    ??
+                    ''
+                )
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Expiration
+        |--------------------------------------------------------------------------
+        |
+        | Seven days gives the buyer/seller enough time to complete
+        | the transaction while preventing abandoned escrows from
+        | remaining indefinitely.
+        |
+        */
+
+        $expiresAt =
+            date(
+                'Y-m-d H:i:s',
+                strtotime('+7 days')
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Build Escrow Data
+        |--------------------------------------------------------------------------
+        |
+        | IMPORTANT:
+        |
+        | This array matches the existing Models/Escrow::create()
+        | structure.
+        |
+        */
+
+        $data = [
+
+            'reference' =>
+                $reference,
+
+            'listing_id' =>
+                $listingId,
+
+            'buyer_id' =>
+                $buyerId,
+
+            'seller_id' =>
+                $sellerId,
+
+            'buyer_phone' =>
+                $buyerPhone,
+
+            'seller_phone' =>
+                $sellerPhone,
+
+            'amount' =>
+                $amount,
+
+            'escrow_fee' =>
+                $escrowFee,
+
+            'seller_amount' =>
+                $sellerAmount,
+
+            'currency' =>
+                $currency,
+
+            'payment_method' =>
+                'paystack',
+
+            'delivery_type' =>
+                $deliveryType,
+
+            'payment_reference' =>
+                null,
+
+            'release_code' =>
+                null,
+
+            'status' =>
+                'pending',
+
+            'expires_at' =>
+                $expiresAt
+        ];
+
+
+        Logger::write(
+            'escrow_service',
+            [
+                'step' => 'CREATE_DATA_PREPARED',
+                'reference' => $reference,
+                'listing_id' => $listingId,
+                'buyer_id' => $buyerId,
+                'seller_id' => $sellerId,
+                'amount' => $amount,
+                'currency' => $currency,
+                'status' => 'pending'
+            ]
+        );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Create Through Escrow Model
+        |--------------------------------------------------------------------------
+        |
+        | This is the critical fix.
+        |
+        | DO NOT perform a raw INSERT here.
+        |
+        | The Escrow model owns the database structure.
+        |
+        */
+
+        $created =
+            $this->escrowModel->create(
+                $data
+            );
+
+
+        Logger::write(
+            'escrow_service',
+            [
+                'step' => 'CREATE_MODEL_RESULT',
+                'reference' => $reference,
+                'listing_id' => $listingId,
+                'buyer_id' => $buyerId,
+                'seller_id' => $sellerId,
+                'result_type' => gettype($created),
+                'result' => $created
+            ]
+        );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Normalize Model Result
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            $created === false
+            ||
+            $created === null
+        ) {
+
+            Logger::write(
+                'escrow_service_error',
+                [
+                    'step' => 'CREATE_MODEL_FAILED',
+                    'reference' => $reference,
+                    'listing_id' => $listingId,
+                    'buyer_id' => $buyerId,
+                    'seller_id' => $sellerId
+                ]
+            );
+
+            return null;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | If Model Returned An Array
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            is_array($created)
+        ) {
+
+            /*
+             * Ensure the public reference is available.
+             */
+            if (
+                empty($created['reference'])
+            ) {
+
+                $created['reference'] =
+                    $reference;
+            }
+
+
+            if (
+                !array_key_exists(
+                    'success',
+                    $created
+                )
+            ) {
+
+                $created['success'] = true;
+            }
+
+
+            Logger::write(
+                'escrow_service',
+                [
+                    'step' => 'CREATE_COMPLETE',
+                    'reference' =>
+                        $created['reference']
+                        ??
+                        $reference,
+                    'listing_id' => $listingId,
+                    'buyer_id' => $buyerId,
+                    'seller_id' => $sellerId
+                ]
+            );
+
+
+            return $created;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Model Returned An ID
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            is_numeric($created)
+        ) {
+
+            $escrowId =
+                (int)$created;
+
+
+            Logger::write(
+                'escrow_service',
+                [
+                    'step' => 'CREATE_MODEL_RETURNED_ID',
+                    'escrow_id' => $escrowId,
+                    'reference' => $reference
+                ]
+            );
+
+
+            return [
+
+                'success' =>
+                    true,
+
+                'id' =>
+                    $escrowId,
+
+                'reference' =>
+                    $reference,
+
+                'listing_id' =>
+                    $listingId,
+
+                'buyer_id' =>
+                    $buyerId,
+
+                'seller_id' =>
+                    $sellerId,
+
+                'amount' =>
+                    $amount,
+
+                'currency' =>
+                    $currency,
+
+                'status' =>
+                    'pending'
+            ];
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Unknown Return Type
+        |--------------------------------------------------------------------------
+        */
+
+        Logger::write(
+            'escrow_service_error',
+            [
+                'step' =>
+                    'CREATE_UNKNOWN_MODEL_RESULT',
+
+                'reference' =>
+                    $reference,
+
+                'result_type' =>
+                    gettype($created),
+
+                'result' =>
+                    $created
+            ]
+        );
+
+
+        return null;
+
     }
+    catch (Throwable $e) {
+
+        Logger::write(
+            'escrow_service_error',
+            [
+                'step' =>
+                    'CREATE_EXCEPTION',
+
+                'listing_id' =>
+                    $listingId,
+
+                'buyer_id' =>
+                    $buyerId,
+
+                'message' =>
+                    $e->getMessage(),
+
+                'file' =>
+                    $e->getFile(),
+
+                'line' =>
+                    $e->getLine(),
+
+                'trace' =>
+                    $e->getTraceAsString()
+            ]
+        );
+
+
+        return null;
+    }
+}
 
 
     /*
