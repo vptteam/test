@@ -1,0 +1,14 @@
+RewriteEngine On
+
+# ---------------------------------------------------------
+# SENDAM ADMIN ESCROW
+# ---------------------------------------------------------
+RewriteRule ^admin/escrow/?$ admin/escrow_payout.php [L]
+
+
+# ---------------------------------------------------------
+# EXISTING APPLICATION ROUTES
+# ---------------------------------------------------------
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [L]

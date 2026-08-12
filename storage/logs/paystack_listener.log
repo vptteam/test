@@ -1,0 +1,5 @@
+[2026-08-12 07:06:30] {"step":"REQUEST_RECEIVED","method":"GET","uri":"/payment/paystack/advert/callback?trxref=ESC202608126D0D2832&reference=ESC202608126D0D2832","query":{"trxref":"ESC202608126D0D2832","reference":"ESC202608126D0D2832"},"post":[],"time":"2026-08-12 07:06:30"}
+[2026-08-12 07:06:30] {"step":"BEFORE_CONTROLLER_CREATE"}
+[2026-08-12 07:06:30] {"step":"CONTROLLER_CREATED","class":"Controllers\\AdvertPaymentController"}
+[2026-08-12 07:06:30] {"step":"BEFORE_CALLBACK_EXECUTION"}
+[2026-08-12 07:06:30] {"step":"CALLBACK_FINISHED"}

@@ -1,0 +1,12 @@
+[2026-08-12 07:02:43] {"step":"FIND_OPEN_START","buyer_id":33,"listing_id":37}
+[2026-08-12 07:02:43] {"step":"FIND_OPEN_RESULT","buyer_id":33,"listing_id":37,"found":false,"result":false}
+[2026-08-12 07:02:43] {"step":"FIND_REFERENCE_START","reference":"ESC202608126D0D2832"}
+[2026-08-12 07:02:43] {"step":"FIND_REFERENCE_RESULT","reference":"ESC202608126D0D2832","found":false,"result":false}
+[2026-08-12 07:02:43] {"step":"GENERATE_REFERENCE","reference":"ESC202608126D0D2832"}
+[2026-08-12 07:02:43] {"step":"GENERATE_RELEASE_CODE","code":"D4302B"}
+[2026-08-12 07:02:43] {"step":"CREATE_START","data":{"reference":"ESC202608126D0D2832","listing_id":37,"buyer_id":33,"seller_id":30,"buyer_phone":"5684672824","seller_phone":"6331755807","buyer_email":null,"seller_email":null,"release_code":"D4302B","amount":100,"escrow_fee":5,"seller_amount":95,"currency":"NGN","payment_method":"paystack","delivery_type":null,"payment_reference":null,"status":"pending","expires_at":"2026-08-26 07:02:43"}}
+[2026-08-12 07:02:43] {"step":"CREATE_INSERTED","id":10,"reference":"ESC202608126D0D2832"}
+[2026-08-12 07:02:43] {"step":"FIND_START","id":10}
+[2026-08-12 07:02:43] {"step":"FIND_RESULT","id":10,"found":true,"result":{"id":10,"reference":"ESC202608126D0D2832","listing_id":37,"buyer_id":33,"seller_id":30,"buyer_phone":"5684672824","seller_phone":"6331755807","buyer_email":null,"seller_email":null,"release_code":"D4302B","amount":"100.00","escrow_fee":"5.00","paystack_fee":"0.00","seller_amount":"95.00","total_amount":"105.00","currency":"NGN","payment_method":"paystack","delivery_type":"digital","payment_reference":null,"payout_reference":null,"payout_paid_at":null,"status":"pending","buyer_confirmed_at":null,"seller_confirmed_at":null,"released_at":null,"cancelled_at":null,"expires_at":"2026-08-26 07:02:43","created_at":"2026-08-12 06:02:43","updated_at":"2026-08-12 06:02:43"}}
+[2026-08-12 07:02:43] {"step":"UPDATE_START","id":10,"data":{"payment_reference":"ESC202608126D0D2832"}}
+[2026-08-12 07:02:43] {"step":"UPDATE_RESULT","id":10,"success":true,"rows_affected":1}

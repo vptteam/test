@@ -1,0 +1,25 @@
+[2026-08-12 07:02:43] {"step":"CONSTRUCTOR_START"}
+[2026-08-12 07:02:43] {"step":"ESCROW_MODEL_READY"}
+[2026-08-12 07:02:43] {"step":"LISTING_MODEL_READY"}
+[2026-08-12 07:02:43] {"step":"USER_MODEL_READY"}
+[2026-08-12 07:02:43] {"step":"CONSTRUCTOR_COMPLETE"}
+[2026-08-12 07:02:43] {"step":"CREATE_START","listing":"SDM-000037","buyer_id":33,"buyer_phone":"5684672824"}
+[2026-08-12 07:02:43] {"step":"FIND_LISTING_START","reference":"SDM-000037"}
+[2026-08-12 07:02:43] {"step":"FIND_LISTING_RESULT","listing":{"id":37,"reference":"SDM-000037","user_id":30,"title":"TEST","price":"100.00","location":"Abuja","description":"Working","status":"published","published_at":"2026-08-12 05:48:09","created_at":"2026-08-12 05:48:08","updated_at":"2026-08-12 06:01:17"}}
+[2026-08-12 07:02:43] {"step":"CHECK_LISTING_STATUS","status":"published"}
+[2026-08-12 07:02:43] {"step":"LISTING_STATUS_ACCEPTED"}
+[2026-08-12 07:02:43] {"step":"SELF_PURCHASE_CHECK","seller_id":30,"buyer_id":33}
+[2026-08-12 07:02:43] {"step":"SELLER_LOOKUP_START","seller_id":30}
+[2026-08-12 07:02:43] {"step":"SELLER_LOOKUP_RESULT","seller":{"id":30,"telegram_id":null,"platform":"telegram","name":"Vin","phone":"6331755807","email":null,"current_state":"welcome","created_at":"2026-08-08 10:38:30","updated_at":"2026-08-08 10:38:30","platform_id":"6331755807","sendam_id":"SND-71549","verification_status":"none","verified_at":null,"verification_method":"none","trust_score":"100.00","rating":"5.00","completed_sales":0,"completed_buys":0,"scam_reports":0,"last_seen_at":null,"referral_code":null,"referred_by":null,"role":"user"}}
+[2026-08-12 07:02:43] {"step":"BUYER_LOOKUP_START","buyer_id":33}
+[2026-08-12 07:02:43] {"step":"BUYER_LOOKUP_RESULT","buyer":{"id":33,"telegram_id":null,"platform":"telegram","name":"Mr","phone":"5684672824","email":null,"current_state":"welcome","created_at":"2026-08-08 15:05:20","updated_at":"2026-08-08 15:05:20","platform_id":"5684672824","sendam_id":"SND-58838","verification_status":"none","verified_at":null,"verification_method":"none","trust_score":"100.00","rating":"5.00","completed_sales":0,"completed_buys":0,"scam_reports":0,"last_seen_at":null,"referral_code":null,"referred_by":null,"role":"user"}}
+[2026-08-12 07:02:43] {"step":"DUPLICATE_CHECK_START","buyer_id":33,"listing_id":37}
+[2026-08-12 07:02:43] {"step":"DUPLICATE_CHECK_RESULT","existing":null}
+[2026-08-12 07:02:43] {"step":"GENERATE_REFERENCE_START"}
+[2026-08-12 07:02:43] {"step":"REFERENCE_CREATED","reference":"ESC202608126D0D2832"}
+[2026-08-12 07:02:43] {"step":"RELEASE_CODE_CREATED","release_code":"D4302B"}
+[2026-08-12 07:02:43] {"step":"AMOUNT_READ","listing_price":"100.00","amount":100}
+[2026-08-12 07:02:43] {"step":"FEE_CALCULATED","amount":100,"fee":5,"seller_amount":95}
+[2026-08-12 07:02:43] {"step":"BEFORE_DATABASE_CREATE","data":{"reference":"ESC202608126D0D2832","listing_id":37,"buyer_id":33,"seller_id":30,"buyer_phone":"5684672824","seller_phone":"6331755807","buyer_email":null,"seller_email":null,"release_code":"D4302B","amount":100,"escrow_fee":5,"seller_amount":95,"currency":"NGN","payment_method":"paystack","delivery_type":null,"payment_reference":null,"status":"pending","expires_at":"2026-08-26 07:02:43"}}
+[2026-08-12 07:02:43] {"step":"DATABASE_CREATE_RESULT","result":{"id":10,"reference":"ESC202608126D0D2832","listing_id":37,"buyer_id":33,"seller_id":30,"buyer_phone":"5684672824","seller_phone":"6331755807","buyer_email":null,"seller_email":null,"release_code":"D4302B","amount":"100.00","escrow_fee":"5.00","paystack_fee":"0.00","seller_amount":"95.00","total_amount":"105.00","currency":"NGN","payment_method":"paystack","delivery_type":"digital","payment_reference":null,"payout_reference":null,"payout_paid_at":null,"status":"pending","buyer_confirmed_at":null,"seller_confirmed_at":null,"released_at":null,"cancelled_at":null,"expires_at":"2026-08-26 07:02:43","created_at":"2026-08-12 06:02:43","updated_at":"2026-08-12 06:02:43"}}
+[2026-08-12 07:02:43] {"step":"CREATE_COMPLETE","escrow_id":10,"reference":"ESC202608126D0D2832"}

@@ -1,0 +1,14 @@
+[2026-08-12 07:02:43] {"step":"APPLICATION_START","request_uri":"/telegram","method":"POST","time":"2026-08-12 07:02:43"}
+[2026-08-12 07:02:43] {"step":"APPLICATION_COMPLETE","request_uri":"/telegram"}
+[2026-08-12 07:06:09] {"step":"APPLICATION_START","request_uri":"/payment/paystack/advert/webhook","method":"POST","time":"2026-08-12 07:06:09"}
+[2026-08-12 07:06:09] {"step":"APPLICATION_COMPLETE","request_uri":"/payment/paystack/advert/webhook"}
+[2026-08-12 07:06:30] {"step":"APPLICATION_START","request_uri":"/payment/paystack/advert/callback?trxref=ESC202608126D0D2832&reference=ESC202608126D0D2832","method":"GET","time":"2026-08-12 07:06:30"}
+[2026-08-12 07:06:30] {"step":"APPLICATION_COMPLETE","request_uri":"/payment/paystack/advert/callback?trxref=ESC202608126D0D2832&reference=ESC202608126D0D2832"}
+[2026-08-12 09:44:20] {"step":"APPLICATION_START","request_uri":"/","method":"GET","time":"2026-08-12 09:44:20"}
+[2026-08-12 09:44:20] {"step":"APPLICATION_COMPLETE","request_uri":"/"}
+[2026-08-12 14:46:16] {"step":"APPLICATION_START","request_uri":"/","method":"GET","time":"2026-08-12 14:46:16"}
+[2026-08-12 14:46:16] {"step":"APPLICATION_COMPLETE","request_uri":"/"}
+[2026-08-12 15:01:18] {"step":"APPLICATION_START","request_uri":"/","method":"GET","time":"2026-08-12 15:01:18"}
+[2026-08-12 15:01:18] {"step":"APPLICATION_COMPLETE","request_uri":"/"}
+[2026-08-12 17:07:50] {"step":"APPLICATION_START","request_uri":"/robots.txt","method":"GET","time":"2026-08-12 17:07:50"}
+[2026-08-12 17:07:50] {"step":"APPLICATION_COMPLETE","request_uri":"/robots.txt"}
