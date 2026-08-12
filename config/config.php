@@ -102,21 +102,21 @@ defined('DB_PORT')
 defined('DB_NAME')
     || define(
         'DB_NAME',
-        'u189266834_jolene'
+        ''
     );
 
 
 defined('DB_USER')
     || define(
         'DB_USER',
-        'u189266834_jolene'
+        ''
     );
 
 
 defined('DB_PASS')
     || define(
         'DB_PASS',
-        'n1Q=*oiwF4U'
+        ''
     );
 
 
@@ -168,7 +168,7 @@ define(
 defined('TELEGRAM_BOT_TOKEN')
     || define(
         'TELEGRAM_BOT_TOKEN',
-        '8945500663:AAG8XpFB4NNTLxmCiqT66U-pNXhMJh9e2pU'
+        ''
     );
 
 
@@ -197,7 +197,7 @@ defined('TELEGRAM_WEBHOOK_URL')
 
 defined('TELEGRAM_CHANNEL_ID') || define(
     'TELEGRAM_CHANNEL_ID',
-    '-1004430801113'
+    ''
 );
 
 define(
@@ -284,14 +284,14 @@ define(
 defined('TWILIO_ACCOUNT_SID')
     || define(
         'TWILIO_ACCOUNT_SID',
-        'ACafe386df0db895eabf8b974c8e4a9a5e'
+        ''
     );
 
 
 defined('TWILIO_AUTH_TOKEN')
     || define(
         'TWILIO_AUTH_TOKEN',
-        'bbc9900bdc638975b1d18f02d56e2388'
+        ''
     );
 
 
@@ -325,14 +325,14 @@ defined('TWILIO_WEBHOOK_SECRET')
 defined('PAYSTACK_SECRET_KEY')
     || define(
         'PAYSTACK_SECRET_KEY',
-        'sk_live_b581a400ea79460780f8e3be00ac40a6877c4fb8'
+        ''
     );
 
 
 defined('PAYSTACK_PUBLIC_KEY')
     || define(
         'PAYSTACK_PUBLIC_KEY',
-        'pk_live_0125a656d77ae1d6f7d9b6d1b7e6bb7d84931a3f'
+        ''
     );
 
 
