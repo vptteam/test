@@ -900,202 +900,355 @@ class Escrow
     */
 
     public function markPaid(
-        int $id,
-        string $paymentReference
-    ): bool {
-        try {
+    int $id,
+    string $paymentReference
+): bool {
 
-            $paymentReference =
-                trim(
-                    $paymentReference
-                );
+    try {
+
+        $paymentReference = trim(
+            $paymentReference
+        );
+
+        Logger::write(
+            'escrow_model',
+            [
+                'step' => 'MARK_PAID_START',
+                'escrow_id' => $id,
+                'payment_reference' => $paymentReference,
+            ]
+        );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | VALIDATE INPUT
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            $id <= 0
+            ||
+            $paymentReference === ''
+        ) {
 
             Logger::write(
-                'escrow_model',
+                'escrow_model_error',
                 [
-                    'step' => 'MARK_PAID_START',
+                    'step' => 'MARK_PAID_INVALID_ARGUMENTS',
                     'escrow_id' => $id,
                     'payment_reference' => $paymentReference,
                 ]
             );
 
-            if ($id <= 0 || $paymentReference === '') {
+            return false;
+        }
 
-                Logger::write(
-                    'escrow_model_error',
-                    [
-                        'step' => 'MARK_PAID_INVALID_ARGUMENTS',
-                        'escrow_id' => $id,
-                        'payment_reference' => $paymentReference,
-                    ]
-                );
 
-                return false;
-            }
+        /*
+        |--------------------------------------------------------------------------
+        | LOAD ESCROW
+        |--------------------------------------------------------------------------
+        */
 
-            $escrow = $this->find($id);
+        $escrow = $this->find($id);
 
-            if (!$escrow) {
 
-                Logger::write(
-                    'escrow_model_error',
-                    [
-                        'step' => 'MARK_PAID_ESCROW_NOT_FOUND',
-                        'escrow_id' => $id,
-                    ]
-                );
+        if (!$escrow) {
 
-                return false;
-            }
+            Logger::write(
+                'escrow_model_error',
+                [
+                    'step' => 'MARK_PAID_ESCROW_NOT_FOUND',
+                    'escrow_id' => $id,
+                ]
+            );
 
-            $currentStatus =
-                strtolower(
-                    trim(
-                        (string)($escrow['status'] ?? '')
-                    )
-                );
+            return false;
+        }
 
-            $existingPaymentReference =
+
+        /*
+        |--------------------------------------------------------------------------
+        | CURRENT STATE
+        |--------------------------------------------------------------------------
+        */
+
+        $currentStatus =
+            strtolower(
                 trim(
                     (string)(
-                        $escrow['payment_reference']
+                        $escrow['status']
                         ?? ''
                     )
-                );
+                )
+            );
 
-            /*
-             * Same Paystack transaction has already been applied.
-             */
-            if (
-                $existingPaymentReference !== ''
-                &&
-                hash_equals(
+
+        $existingPaymentReference =
+            trim(
+                (string)(
+                    $escrow['payment_reference']
+                    ?? ''
+                )
+            );
+
+
+        Logger::write(
+            'escrow_model',
+            [
+                'step' => 'MARK_PAID_CURRENT_STATE',
+                'escrow_id' => $id,
+                'status' => $currentStatus,
+                'existing_payment_reference' =>
                     $existingPaymentReference,
-                    $paymentReference
-                )
-                &&
-                in_array(
-                    $currentStatus,
-                    $this->paidStatuses,
-                    true
-                )
-            ) {
+            ]
+        );
 
-                Logger::write(
-                    'escrow_model',
-                    [
-                        'step' => 'MARK_PAID_ALREADY_PROCESSED',
-                        'escrow_id' => $id,
-                        'status' => $currentStatus,
-                        'payment_reference' =>
-                            $existingPaymentReference,
-                    ]
-                );
 
-                return true;
-            }
+        /*
+        |--------------------------------------------------------------------------
+        | IDEMPOTENCY
+        |--------------------------------------------------------------------------
+        |
+        | Same Paystack transaction has already been processed.
+        |
+        */
+
+        if (
+            $existingPaymentReference !== ''
+            &&
+            hash_equals(
+                $existingPaymentReference,
+                $paymentReference
+            )
+            &&
+            in_array(
+                $currentStatus,
+                $this->paidStatuses,
+                true
+            )
+        ) {
+
+            Logger::write(
+                'escrow_model',
+                [
+                    'step' => 'MARK_PAID_ALREADY_PROCESSED',
+                    'escrow_id' => $id,
+                    'status' => $currentStatus,
+                    'payment_reference' =>
+                        $existingPaymentReference,
+                ]
+            );
+
+            return true;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | PAYMENT REFERENCE CONFLICT
+        |--------------------------------------------------------------------------
+        |
+        | Never allow a different Paystack transaction to overwrite
+        | the payment reference already attached to this escrow.
+        |
+        */
+
+        if (
+            $existingPaymentReference !== ''
+            &&
+            !hash_equals(
+                $existingPaymentReference,
+                $paymentReference
+            )
+        ) {
+
+            Logger::write(
+                'escrow_model_error',
+                [
+                    'step' => 'PAYMENT_REFERENCE_CONFLICT',
+                    'escrow_id' => $id,
+                    'existing_reference' =>
+                        $existingPaymentReference,
+                    'incoming_reference' =>
+                        $paymentReference,
+                ]
+            );
+
+            return false;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | ADVANCED ESCROW STATES
+        |--------------------------------------------------------------------------
+        |
+        | If the escrow has already progressed beyond "paid",
+        | NEVER move it backwards.
+        |
+        */
+
+        if (
+            in_array(
+                $currentStatus,
+                [
+                    'item_sent',
+                    'awaiting_payout',
+                    'completed',
+                ],
+                true
+            )
+        ) {
+
+            Logger::write(
+                'escrow_model',
+                [
+                    'step' => 'MARK_PAID_ADVANCED_STATUS',
+                    'escrow_id' => $id,
+                    'status' => $currentStatus,
+                ]
+            );
+
 
             /*
-             * Another payment reference is already attached.
+             * Normally an advanced escrow should already have
+             * a payment reference.
              *
-             * Never silently replace it.
+             * If it does not, attach the reference and then
+             * verify the database state.
              */
+
             if (
-                $existingPaymentReference !== ''
-                &&
-                !hash_equals(
-                    $existingPaymentReference,
-                    $paymentReference
-                )
+                $existingPaymentReference === ''
             ) {
 
-                Logger::write(
-                    'escrow_model_error',
-                    [
-                        'step' => 'PAYMENT_REFERENCE_CONFLICT',
-                        'escrow_id' => $id,
-                        'existing_reference' =>
-                            $existingPaymentReference,
-                        'incoming_reference' =>
-                            $paymentReference,
-                    ]
-                );
-
-                return false;
-            }
-
-            /*
-             * Payment has already moved beyond paid.
-             *
-             * Never move it backwards.
-             */
-            if (
-                in_array(
-                    $currentStatus,
-                    [
-                        'item_sent',
-                        'awaiting_payout',
-                        'completed',
-                    ],
-                    true
-                )
-            ) {
-
-                Logger::write(
-                    'escrow_model',
-                    [
-                        'step' => 'MARK_PAID_ADVANCED_STATUS',
-                        'escrow_id' => $id,
-                        'status' => $currentStatus,
-                    ]
-                );
-
-                /*
-                 * If no payment reference exists, attach the reference
-                 * without changing the advanced status.
-                 */
-                if ($existingPaymentReference === '') {
-
-                    return $this->update(
+                $updated =
+                    $this->update(
                         $id,
                         [
                             'payment_reference' =>
                                 $paymentReference,
                         ]
                     );
+
+
+                if (!$updated) {
+
+                    Logger::write(
+                        'escrow_model_error',
+                        [
+                            'step' =>
+                                'MARK_PAID_ADVANCED_REFERENCE_UPDATE_FAILED',
+
+                            'escrow_id' =>
+                                $id,
+
+                            'payment_reference' =>
+                                $paymentReference,
+                        ]
+                    );
+
+                    return false;
                 }
 
-                return true;
-            }
 
-            /*
-             * Only pending escrow may transition to paid.
-             */
-            if ($currentStatus !== 'pending') {
+                $after =
+                    $this->find(
+                        $id
+                    );
+
+
+                $afterReference =
+                    trim(
+                        (string)(
+                            $after['payment_reference']
+                            ?? ''
+                        )
+                    );
+
+
+                if (
+                    $after
+                    &&
+                    hash_equals(
+                        $afterReference,
+                        $paymentReference
+                    )
+                ) {
+
+                    return true;
+                }
+
 
                 Logger::write(
                     'escrow_model_error',
                     [
-                        'step' => 'MARK_PAID_INVALID_STATUS',
-                        'escrow_id' => $id,
-                        'status' => $currentStatus,
+                        'step' =>
+                            'MARK_PAID_ADVANCED_REFERENCE_VERIFY_FAILED',
+
+                        'escrow_id' =>
+                            $id,
+
+                        'payment_reference' =>
+                            $paymentReference,
+
+                        'after_update' =>
+                            $after,
                     ]
                 );
 
                 return false;
             }
 
-            /*
-             * Atomic transition:
-             *
-             * pending -> paid
-             *
-             * The WHERE clause prevents a race condition where two
-             * webhook requests try to process the same escrow.
-             */
-            $db = Database::getInstance()->connection();
 
-            $stmt = $db->prepare(
+            return true;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | ONLY PENDING CAN BECOME PAID
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            $currentStatus !== 'pending'
+        ) {
+
+            Logger::write(
+                'escrow_model_error',
+                [
+                    'step' => 'MARK_PAID_INVALID_STATUS',
+                    'escrow_id' => $id,
+                    'status' => $currentStatus,
+                ]
+            );
+
+            return false;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | ATOMIC PAYMENT TRANSITION
+        |--------------------------------------------------------------------------
+        |
+        | pending -> paid
+        |
+        | The WHERE clause prevents two simultaneous webhook
+        | requests from both claiming the same escrow.
+        |
+        */
+
+        $db =
+            Database::getInstance()
+                ->connection();
+
+
+        $stmt =
+            $db->prepare(
                 "
                 UPDATE {$this->table}
 
@@ -1105,107 +1258,257 @@ class Escrow
                     updated_at = NOW()
 
                 WHERE id = :id
+
                 AND status = 'pending'
-                AND
-                (
+
+                AND (
                     payment_reference IS NULL
                     OR payment_reference = ''
                 )
                 "
             );
 
-            $stmt->execute(
-                [
-                    'payment_reference' =>
-                        $paymentReference,
 
-                    'id' =>
+        $stmt->execute(
+            [
+                'payment_reference' =>
+                    $paymentReference,
+
+                'id' =>
+                    $id,
+            ]
+        );
+
+
+        $affected =
+            $stmt->rowCount();
+
+
+        Logger::write(
+            'escrow_model',
+            [
+                'step' =>
+                    'MARK_PAID_ATOMIC_RESULT',
+
+                'escrow_id' =>
+                    $id,
+
+                'payment_reference' =>
+                    $paymentReference,
+
+                'rows_affected' =>
+                    $affected,
+            ]
+        );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | ALWAYS RELOAD DATABASE STATE
+        |--------------------------------------------------------------------------
+        |
+        | Do not trust rowCount() alone.
+        |
+        */
+
+        $after =
+            $this->find(
+                $id
+            );
+
+
+        if (!$after) {
+
+            Logger::write(
+                'escrow_model_error',
+                [
+                    'step' =>
+                        'MARK_PAID_RELOAD_FAILED',
+
+                    'escrow_id' =>
                         $id,
-                ]
-            );
-
-            $affected =
-                $stmt->rowCount();
-
-            Logger::write(
-                'escrow_model',
-                [
-                    'step' => 'MARK_PAID_ATOMIC_RESULT',
-                    'escrow_id' => $id,
-                    'payment_reference' => $paymentReference,
-                    'rows_affected' => $affected,
-                ]
-            );
-
-            /*
-             * Another concurrent request may have completed the update.
-             * Reload the row and determine the final state.
-             */
-            $after = $this->find($id);
-
-            if (
-                $after
-                &&
-                in_array(
-                    strtolower(
-                        trim(
-                            (string)($after['status'] ?? '')
-                        )
-                    ),
-                    $this->paidStatuses,
-                    true
-                )
-                &&
-                trim(
-                    (string)(
-                        $after['payment_reference']
-                        ?? ''
-                    )
-                ) === $paymentReference
-            ) {
-
-                Logger::write(
-                    'escrow_model',
-                    [
-                        'step' => 'MARK_PAID_CONFIRMED',
-                        'escrow_id' => $id,
-                        'after_update' => $after,
-                    ]
-                );
-
-                return true;
-            }
-
-            Logger::write(
-                'escrow_model_error',
-                [
-                    'step' => 'MARK_PAID_FAILED',
-                    'escrow_id' => $id,
-                    'payment_reference' => $paymentReference,
-                    'after_update' => $after,
-                ]
-            );
-
-            return false;
-
-        } catch (Throwable $e) {
-
-            Logger::write(
-                'escrow_model_error',
-                [
-                    'step' => 'MARK_PAID_EXCEPTION',
-                    'escrow_id' => $id,
-                    'payment_reference' => $paymentReference,
-                    'message' => $e->getMessage(),
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine(),
-                    'trace' => $e->getTraceAsString(),
                 ]
             );
 
             return false;
         }
+
+
+        $afterStatus =
+            strtolower(
+                trim(
+                    (string)(
+                        $after['status']
+                        ?? ''
+                    )
+                )
+            );
+
+
+        $afterPaymentReference =
+            trim(
+                (string)(
+                    $after['payment_reference']
+                    ?? ''
+                )
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | FINAL DATABASE VERIFICATION
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            $afterStatus === 'paid'
+            &&
+            $afterPaymentReference !== ''
+            &&
+            hash_equals(
+                $afterPaymentReference,
+                $paymentReference
+            )
+        ) {
+
+            Logger::write(
+                'escrow_model',
+                [
+                    'step' =>
+                        'MARK_PAID_CONFIRMED',
+
+                    'escrow_id' =>
+                        $id,
+
+                    'payment_reference' =>
+                        $paymentReference,
+
+                    'status' =>
+                        $afterStatus,
+
+                    'rows_affected' =>
+                        $affected,
+                ]
+            );
+
+            return true;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | CONCURRENT WEBHOOK CHECK
+        |--------------------------------------------------------------------------
+        |
+        | Another webhook may have completed the transaction first.
+        |
+        */
+
+        if (
+            in_array(
+                $afterStatus,
+                $this->paidStatuses,
+                true
+            )
+            &&
+            $afterPaymentReference !== ''
+            &&
+            hash_equals(
+                $afterPaymentReference,
+                $paymentReference
+            )
+        ) {
+
+            Logger::write(
+                'escrow_model',
+                [
+                    'step' =>
+                        'MARK_PAID_CONCURRENT_SUCCESS',
+
+                    'escrow_id' =>
+                        $id,
+
+                    'status' =>
+                        $afterStatus,
+
+                    'payment_reference' =>
+                        $afterPaymentReference,
+                ]
+            );
+
+            return true;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | FAILED TRANSITION
+        |--------------------------------------------------------------------------
+        */
+
+        Logger::write(
+            'escrow_model_error',
+            [
+                'step' =>
+                    'MARK_PAID_FAILED',
+
+                'escrow_id' =>
+                    $id,
+
+                'incoming_payment_reference' =>
+                    $paymentReference,
+
+                'after_status' =>
+                    $afterStatus,
+
+                'after_payment_reference' =>
+                    $afterPaymentReference,
+
+                'rows_affected' =>
+                    $affected,
+
+                'after_update' =>
+                    $after,
+            ]
+        );
+
+
+        return false;
+
+
     }
+    catch (Throwable $e) {
+
+        Logger::write(
+            'escrow_model_error',
+            [
+                'step' =>
+                    'MARK_PAID_EXCEPTION',
+
+                'escrow_id' =>
+                    $id,
+
+                'payment_reference' =>
+                    $paymentReference,
+
+                'message' =>
+                    $e->getMessage(),
+
+                'file' =>
+                    $e->getFile(),
+
+                'line' =>
+                    $e->getLine(),
+
+                'trace' =>
+                    $e->getTraceAsString(),
+            ]
+        );
+
+
+        return false;
+    }
+}
 
     /*
     |--------------------------------------------------------------------------

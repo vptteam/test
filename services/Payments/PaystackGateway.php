@@ -376,194 +376,710 @@ class PaystackGateway
 
 
     /**
-     * ---------------------------------------------------------
-     * Verify Payment
-     * ---------------------------------------------------------
-     */
-    public function verify(
-        string $reference
-    ): array {
+ * ---------------------------------------------------------
+ * Verify Payment
+ * ---------------------------------------------------------
+ *
+ * Verifies a Paystack transaction using its payment reference.
+ *
+ * IMPORTANT:
+ *
+ * The reference passed here must be the actual Paystack
+ * transaction reference, for example:
+ *
+ *     ESC-SDM-000037-A1B2C3D4
+ *
+ * It is NOT the escrow public reference:
+ *
+ *     SDM-000037
+ *
+ * Paystack returns amount in kobo. This method exposes both
+ * amount_kobo and amount in NGN.
+ *
+ * ---------------------------------------------------------
+ */
+public function verify(
+    string $reference
+): array {
 
-        try {
+    $reference = trim($reference);
 
-            $reference = trim(
+    try {
+
+        /*
+        |--------------------------------------------------------------------------
+        | Normalize Reference
+        |--------------------------------------------------------------------------
+        */
+
+        if ($reference === '') {
+
+            Logger::write(
+                'paystack_gateway_error',
+                [
+                    'step' =>
+                        'VERIFY_REFERENCE_MISSING'
+                ]
+            );
+
+            return [
+                'success' => false,
+                'message' =>
+                    'Payment reference is required.'
+            ];
+        }
+
+
+        Logger::write(
+            'paystack_gateway',
+            [
+                'step' =>
+                    'VERIFY_START',
+
+                'reference' =>
+                    $reference
+            ]
+        );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Build Paystack Verification URL
+        |--------------------------------------------------------------------------
+        */
+
+        $baseUrl =
+            rtrim(
+                PAYSTACK_BASE_URL,
+                '/'
+            );
+
+
+        if ($baseUrl === '') {
+
+            Logger::write(
+                'paystack_gateway_error',
+                [
+                    'step' =>
+                        'VERIFY_BASE_URL_MISSING',
+
+                    'reference' =>
+                        $reference
+                ]
+            );
+
+            return [
+                'success' => false,
+                'message' =>
+                    'Paystack configuration is invalid.'
+            ];
+        }
+
+
+        $url =
+            $baseUrl
+            .
+            '/transaction/verify/'
+            .
+            rawurlencode(
                 $reference
             );
 
 
-            Logger::write(
-                'paystack_gateway',
-                [
-                    'step'      => 'VERIFY_START',
-                    'reference' => $reference
-                ]
-            );
+        Logger::write(
+            'paystack_gateway',
+            [
+                'step' =>
+                    'VERIFY_REQUEST',
+
+                'reference' =>
+                    $reference,
+
+                'url' =>
+                    $url
+            ]
+        );
 
 
-            if ($reference === '') {
+        /*
+        |--------------------------------------------------------------------------
+        | Initialize cURL
+        |--------------------------------------------------------------------------
+        */
 
-                return [
-                    'success' => false,
-                    'message' => 'Payment reference is required.'
-                ];
-            }
-
-
-            $url =
-                rtrim(
-                    PAYSTACK_BASE_URL,
-                    '/'
-                ) .
-                '/transaction/verify/' .
-                rawurlencode($reference);
-
-
-            $ch = curl_init(
+        $ch =
+            curl_init(
                 $url
             );
 
 
-            if ($ch === false) {
+        if ($ch === false) {
 
-                return [
-                    'success' => false,
-                    'message' => 'Unable to initialize verification connection.'
-                ];
-            }
-
-
-            curl_setopt_array(
-                $ch,
+            Logger::write(
+                'paystack_gateway_error',
                 [
-                    CURLOPT_RETURNTRANSFER => true,
+                    'step' =>
+                        'VERIFY_CURL_INIT_FAILED',
 
-                    CURLOPT_CONNECTTIMEOUT => 10,
-
-                    CURLOPT_TIMEOUT => 60,
-
-                    CURLOPT_HTTPHEADER => [
-                        'Authorization: Bearer ' .
-                            $this->secret,
-
-                        'Content-Type: application/json',
-
-                        'Accept: application/json'
-                    ]
+                    'reference' =>
+                        $reference
                 ]
             );
 
+            return [
+                'success' => false,
+                'message' =>
+                    'Unable to initialize Paystack verification.'
+            ];
+        }
 
-            $response = curl_exec(
+
+        /*
+        |--------------------------------------------------------------------------
+        | Configure Request
+        |--------------------------------------------------------------------------
+        */
+
+        curl_setopt_array(
+            $ch,
+            [
+                CURLOPT_RETURNTRANSFER =>
+                    true,
+
+                CURLOPT_FOLLOWLOCATION =>
+                    false,
+
+                CURLOPT_CONNECTTIMEOUT =>
+                    10,
+
+                CURLOPT_TIMEOUT =>
+                    60,
+
+                CURLOPT_HTTPGET =>
+                    true,
+
+                CURLOPT_HTTPHEADER => [
+
+                    'Authorization: Bearer '
+                    .
+                    $this->secret,
+
+                    'Content-Type: application/json',
+
+                    'Accept: application/json'
+                ]
+            ]
+        );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Execute Request
+        |--------------------------------------------------------------------------
+        */
+
+        $response =
+            curl_exec(
                 $ch
             );
 
 
-            $http = curl_getinfo(
+        $httpCode =
+            (int)curl_getinfo(
                 $ch,
                 CURLINFO_HTTP_CODE
             );
 
 
-            $error = curl_error(
+        $curlError =
+            curl_error(
                 $ch
             );
 
 
-            curl_close(
+        $curlErrno =
+            curl_errno(
                 $ch
             );
 
+
+        curl_close(
+            $ch
+        );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Log Raw Response
+        |--------------------------------------------------------------------------
+        */
+
+        Logger::write(
+            'paystack_gateway',
+            [
+                'step' =>
+                    'VERIFY_RESPONSE',
+
+                'reference' =>
+                    $reference,
+
+                'http_code' =>
+                    $httpCode,
+
+                'curl_errno' =>
+                    $curlErrno,
+
+                'curl_error' =>
+                    $curlError,
+
+                'response' =>
+                    is_string($response)
+                    ? $response
+                    : null
+            ]
+        );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | cURL Failure
+        |--------------------------------------------------------------------------
+        */
+
+        if ($curlError !== '') {
 
             Logger::write(
-                'paystack_gateway',
+                'paystack_gateway_error',
                 [
-                    'step'      => 'VERIFY_RESPONSE',
-                    'http'      => $http,
-                    'reference' => $reference,
-                    'error'     => $error,
-                    'response'  => $response
+                    'step' =>
+                        'VERIFY_CURL_ERROR',
+
+                    'reference' =>
+                        $reference,
+
+                    'curl_errno' =>
+                        $curlErrno,
+
+                    'message' =>
+                        $curlError
                 ]
             );
 
+            return [
+                'success' => false,
 
-            if ($error) {
+                'retry' => true,
 
-                return [
-                    'success' => false,
-                    'message' => $error
-                ];
-            }
+                'message' =>
+                    'Unable to connect to Paystack.',
+
+                'reference' =>
+                    $reference,
+
+                'http_code' =>
+                    $httpCode,
+
+                'curl_errno' =>
+                    $curlErrno
+            ];
+        }
 
 
-            if (!is_string($response)) {
+        /*
+        |--------------------------------------------------------------------------
+        | Invalid HTTP Response
+        |--------------------------------------------------------------------------
+        */
 
-                return [
-                    'success' => false,
-                    'message' => 'Invalid response from Paystack.'
-                ];
-            }
+        if ($httpCode <= 0) {
+
+            Logger::write(
+                'paystack_gateway_error',
+                [
+                    'step' =>
+                        'VERIFY_HTTP_CODE_MISSING',
+
+                    'reference' =>
+                        $reference
+                ]
+            );
+
+            return [
+                'success' => false,
+
+                'retry' => true,
+
+                'message' =>
+                    'No valid response was received from Paystack.',
+
+                'reference' =>
+                    $reference
+            ];
+        }
 
 
-            $decoded = json_decode(
+        /*
+        |--------------------------------------------------------------------------
+        | Invalid Response Body
+        |--------------------------------------------------------------------------
+        */
+
+        if (!is_string($response)) {
+
+            Logger::write(
+                'paystack_gateway_error',
+                [
+                    'step' =>
+                        'VERIFY_RESPONSE_NOT_STRING',
+
+                    'reference' =>
+                        $reference,
+
+                    'http_code' =>
+                        $httpCode
+                ]
+            );
+
+            return [
+                'success' => false,
+
+                'retry' => true,
+
+                'message' =>
+                    'Invalid response from Paystack.',
+
+                'reference' =>
+                    $reference,
+
+                'http_code' =>
+                    $httpCode
+            ];
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Decode JSON
+        |--------------------------------------------------------------------------
+        */
+
+        $decoded =
+            json_decode(
                 $response,
                 true
             );
 
 
-            if (!is_array($decoded)) {
+        if (
+            !is_array($decoded)
+        ) {
 
-                return [
-                    'success' => false,
-                    'message' => 'Invalid Paystack verification response.'
-                ];
-            }
+            Logger::write(
+                'paystack_gateway_error',
+                [
+                    'step' =>
+                        'VERIFY_JSON_DECODE_FAILED',
+
+                    'reference' =>
+                        $reference,
+
+                    'http_code' =>
+                        $httpCode,
+
+                    'json_error' =>
+                        json_last_error_msg(),
+
+                    'response' =>
+                        $response
+                ]
+            );
+
+            return [
+                'success' => false,
+
+                'retry' =>
+                    $httpCode >= 500
+                    || $httpCode === 429,
+
+                'message' =>
+                    'Invalid Paystack verification response.',
+
+                'reference' =>
+                    $reference,
+
+                'http_code' =>
+                    $httpCode,
+
+                'raw_response' =>
+                    $response
+            ];
+        }
 
 
-            /*
-            |--------------------------------------------------------------------------
-            | Paystack API Request Failed
-            |--------------------------------------------------------------------------
-            */
+        /*
+        |--------------------------------------------------------------------------
+        | Extract Paystack API Status
+        |--------------------------------------------------------------------------
+        */
 
-            if (
-                !($decoded['status'] ?? false)
-            ) {
+        $apiStatus =
+            (bool)(
+                $decoded['status']
+                ?? false
+            );
 
-                return [
-                    'success' => false,
+
+        $apiMessage =
+            trim(
+                (string)(
+                    $decoded['message']
+                    ?? ''
+                )
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Paystack API Request Failed
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            !$apiStatus
+        ) {
+
+            Logger::write(
+                'paystack_gateway_error',
+                [
+                    'step' =>
+                        'VERIFY_PAYSTACK_API_FAILED',
+
+                    'reference' =>
+                        $reference,
+
+                    'http_code' =>
+                        $httpCode,
 
                     'message' =>
-                        $decoded['message']
-                        ??
-                        'Unable to verify payment.',
+                        $apiMessage,
 
-                    'raw' => $decoded
-                ];
-            }
-
-
-            $data =
-                $decoded['data']
-                ?? null;
-
-
-            if (!is_array($data)) {
-
-                return [
-                    'success' => false,
-                    'message' => 'Invalid payment verification data.',
-                    'raw'     => $decoded
-                ];
-            }
+                    'raw' =>
+                        $decoded
+                ]
+            );
 
 
             /*
-            |--------------------------------------------------------------------------
-            | Payment Status
-            |--------------------------------------------------------------------------
-            */
+             * 5xx and 429 responses may be transient.
+             */
+            $retry =
+                $httpCode >= 500
+                ||
+                $httpCode === 429;
 
-            $paymentStatus = strtolower(
+
+            return [
+                'success' => false,
+
+                'retry' =>
+                    $retry,
+
+                'message' =>
+                    $apiMessage !== ''
+                    ? $apiMessage
+                    : 'Unable to verify payment.',
+
+                'reference' =>
+                    $reference,
+
+                'http_code' =>
+                    $httpCode,
+
+                'raw' =>
+                    $decoded
+            ];
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Extract Transaction Data
+        |--------------------------------------------------------------------------
+        */
+
+        $data =
+            $decoded['data']
+            ?? null;
+
+
+        if (
+            !is_array($data)
+        ) {
+
+            Logger::write(
+                'paystack_gateway_error',
+                [
+                    'step' =>
+                        'VERIFY_TRANSACTION_DATA_INVALID',
+
+                    'reference' =>
+                        $reference,
+
+                    'http_code' =>
+                        $httpCode,
+
+                    'raw' =>
+                        $decoded
+                ]
+            );
+
+            return [
+                'success' => false,
+
+                'retry' => true,
+
+                'message' =>
+                    'Invalid payment verification data.',
+
+                'reference' =>
+                    $reference,
+
+                'http_code' =>
+                    $httpCode,
+
+                'raw' =>
+                    $decoded
+            ];
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Extract Verified Paystack Reference
+        |--------------------------------------------------------------------------
+        */
+
+        $verifiedReference =
+            trim(
+                (string)(
+                    $data['reference']
+                    ?? ''
+                )
+            );
+
+
+        if (
+            $verifiedReference === ''
+        ) {
+
+            Logger::write(
+                'paystack_gateway_error',
+                [
+                    'step' =>
+                        'VERIFY_REFERENCE_NOT_RETURNED',
+
+                    'requested_reference' =>
+                        $reference,
+
+                    'http_code' =>
+                        $httpCode,
+
+                    'data' =>
+                        $data
+                ]
+            );
+
+            return [
+                'success' => false,
+
+                'retry' => false,
+
+                'message' =>
+                    'Paystack did not return a transaction reference.',
+
+                'reference' =>
+                    $reference,
+
+                'http_code' =>
+                    $httpCode,
+
+                'data' =>
+                    $data,
+
+                'raw' =>
+                    $decoded
+            ];
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Verify Reference Integrity
+        |--------------------------------------------------------------------------
+        |
+        | Never trust a response that contains a different reference
+        | from the transaction we requested.
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            !hash_equals(
+                strtoupper($reference),
+                strtoupper($verifiedReference)
+            )
+        ) {
+
+            Logger::write(
+                'paystack_gateway_error',
+                [
+                    'step' =>
+                        'VERIFY_REFERENCE_MISMATCH',
+
+                    'requested_reference' =>
+                        $reference,
+
+                    'verified_reference' =>
+                        $verifiedReference,
+
+                    'http_code' =>
+                        $httpCode
+                ]
+            );
+
+            return [
+                'success' => false,
+
+                'retry' => false,
+
+                'message' =>
+                    'Paystack transaction reference mismatch.',
+
+                'reference' =>
+                    $reference,
+
+                'verified_reference' =>
+                    $verifiedReference,
+
+                'http_code' =>
+                    $httpCode,
+
+                'data' =>
+                    $data,
+
+                'raw' =>
+                    $decoded
+            ];
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Payment Status
+        |--------------------------------------------------------------------------
+        */
+
+        $paymentStatus =
+            strtolower(
                 trim(
                     (string)(
                         $data['status']
@@ -573,46 +1089,36 @@ class PaystackGateway
             );
 
 
-            /*
-            |--------------------------------------------------------------------------
-            | Paystack Reference
-            |--------------------------------------------------------------------------
-            */
+        /*
+        |--------------------------------------------------------------------------
+        | Amount
+        |--------------------------------------------------------------------------
+        |
+        | Paystack returns the transaction amount in kobo.
+        |--------------------------------------------------------------------------
+        */
 
-            $verifiedReference = trim(
-                (string)(
-                    $data['reference']
-                    ?? ''
-                )
-            );
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Amount
-            |--------------------------------------------------------------------------
-            |
-            | Paystack returns amount in kobo.
-            |
-            */
-
-            $amountKobo = (int)(
+        $amountKobo =
+            (int)(
                 $data['amount']
                 ?? 0
             );
 
 
-            $amountNgn =
-                $amountKobo / 100;
+        $amountNgn =
+            $amountKobo > 0
+            ? $amountKobo / 100
+            : 0.0;
 
 
-            /*
-            |--------------------------------------------------------------------------
-            | Currency
-            |--------------------------------------------------------------------------
-            */
+        /*
+        |--------------------------------------------------------------------------
+        | Currency
+        |--------------------------------------------------------------------------
+        */
 
-            $currency = strtoupper(
+        $currency =
+            strtoupper(
                 trim(
                     (string)(
                         $data['currency']
@@ -622,73 +1128,117 @@ class PaystackGateway
             );
 
 
-            /*
-            |--------------------------------------------------------------------------
-            | Successful Payment
-            |--------------------------------------------------------------------------
-            */
+        /*
+        |--------------------------------------------------------------------------
+        | Customer
+        |--------------------------------------------------------------------------
+        */
 
-            if (
-                $paymentStatus !== 'success'
-            ) {
-
-                Logger::write(
-                    'paystack_gateway',
-                    [
-                        'step'            => 'PAYMENT_NOT_SUCCESSFUL',
-                        'reference'       => $reference,
-                        'verified_status' => $paymentStatus,
-                        'amount_kobo'     => $amountKobo
-                    ]
-                );
+        $customer =
+            $data['customer']
+            ?? [];
 
 
-                return [
-                    'success' => false,
-
-                    'message' =>
-                        'Payment not successful.',
-
-                    'status' =>
-                        $paymentStatus,
-
-                    'amount' =>
-                        $amountNgn,
-
-                    'amount_kobo' =>
-                        $amountKobo,
-
-                    'currency' =>
-                        $currency,
-
-                    'data' =>
-                        $data,
-
-                    'raw' =>
-                        $decoded
-                ];
-            }
+        if (
+            !is_array($customer)
+        ) {
+            $customer = [];
+        }
 
 
-            /*
-            |--------------------------------------------------------------------------
-            | Successful Verification
-            |--------------------------------------------------------------------------
-            */
+        /*
+        |--------------------------------------------------------------------------
+        | Metadata
+        |--------------------------------------------------------------------------
+        */
+
+        $metadata =
+            $data['metadata']
+            ?? [];
+
+
+        /*
+         * Paystack can sometimes return metadata as something other
+         * than an array depending on the request/response structure.
+         */
+        if (
+            !is_array($metadata)
+        ) {
+            $metadata = [];
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Log Verified Transaction
+        |--------------------------------------------------------------------------
+        */
+
+        Logger::write(
+            'paystack_gateway',
+            [
+                'step' =>
+                    'VERIFY_TRANSACTION_PARSED',
+
+                'reference' =>
+                    $verifiedReference,
+
+                'status' =>
+                    $paymentStatus,
+
+                'amount_kobo' =>
+                    $amountKobo,
+
+                'amount_ngn' =>
+                    $amountNgn,
+
+                'currency' =>
+                    $currency,
+
+                'metadata' =>
+                    $metadata
+            ]
+        );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Payment Was Not Successful
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            $paymentStatus !== 'success'
+        ) {
 
             Logger::write(
                 'paystack_gateway',
                 [
-                    'step'      => 'VERIFY_SUCCESS',
-                    'reference' => $verifiedReference,
-                    'amount'    => $amountNgn,
-                    'currency'  => $currency
+                    'step' =>
+                        'PAYMENT_NOT_SUCCESSFUL',
+
+                    'reference' =>
+                        $verifiedReference,
+
+                    'status' =>
+                        $paymentStatus,
+
+                    'amount_kobo' =>
+                        $amountKobo,
+
+                    'amount_ngn' =>
+                        $amountNgn
                 ]
             );
 
 
             return [
-                'success' => true,
+                'success' => false,
+
+                'retry' => false,
+
+                'message' =>
+                    'Payment not successful.',
 
                 'reference' =>
                     $verifiedReference,
@@ -705,32 +1255,195 @@ class PaystackGateway
                 'currency' =>
                     $currency,
 
+                'metadata' =>
+                    $metadata,
+
+                'customer' =>
+                    $customer,
+
                 'data' =>
                     $data,
 
                 'raw' =>
                     $decoded
             ];
+        }
 
 
-        } catch (Throwable $e) {
+        /*
+        |--------------------------------------------------------------------------
+        | Successful Payment Must Have A Positive Amount
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            $amountKobo <= 0
+        ) {
 
             Logger::write(
                 'paystack_gateway_error',
                 [
-                    'step'      => 'VERIFY_EXCEPTION',
-                    'reference' => $reference,
-                    'message'   => $e->getMessage(),
-                    'line'      => $e->getLine(),
-                    'file'      => $e->getFile()
+                    'step' =>
+                        'VERIFY_SUCCESSFUL_PAYMENT_ZERO_AMOUNT',
+
+                    'reference' =>
+                        $verifiedReference,
+
+                    'status' =>
+                        $paymentStatus,
+
+                    'amount_kobo' =>
+                        $amountKobo
                 ]
             );
 
-
             return [
                 'success' => false,
-                'message' => 'Verification failed.'
+
+                'retry' => false,
+
+                'message' =>
+                    'Verified payment has an invalid amount.',
+
+                'reference' =>
+                    $verifiedReference,
+
+                'status' =>
+                    $paymentStatus,
+
+                'amount' =>
+                    $amountNgn,
+
+                'amount_kobo' =>
+                    $amountKobo,
+
+                'currency' =>
+                    $currency,
+
+                'metadata' =>
+                    $metadata,
+
+                'data' =>
+                    $data,
+
+                'raw' =>
+                    $decoded
             ];
         }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Successful Verification
+        |--------------------------------------------------------------------------
+        */
+
+        Logger::write(
+            'paystack_gateway',
+            [
+                'step' =>
+                    'VERIFY_SUCCESS',
+
+                'reference' =>
+                    $verifiedReference,
+
+                'status' =>
+                    $paymentStatus,
+
+                'amount' =>
+                    $amountNgn,
+
+                'amount_kobo' =>
+                    $amountKobo,
+
+                'currency' =>
+                    $currency
+            ]
+        );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Return Normalized Verification Result
+        |--------------------------------------------------------------------------
+        */
+
+        return [
+
+            'success' =>
+                true,
+
+            'retry' =>
+                false,
+
+            'reference' =>
+                $verifiedReference,
+
+            'status' =>
+                $paymentStatus,
+
+            'amount' =>
+                $amountNgn,
+
+            'amount_kobo' =>
+                $amountKobo,
+
+            'currency' =>
+                $currency,
+
+            'metadata' =>
+                $metadata,
+
+            'customer' =>
+                $customer,
+
+            'data' =>
+                $data,
+
+            'raw' =>
+                $decoded
+        ];
+
+
+    } catch (Throwable $e) {
+
+        Logger::write(
+            'paystack_gateway_error',
+            [
+                'step' =>
+                    'VERIFY_EXCEPTION',
+
+                'reference' =>
+                    $reference,
+
+                'message' =>
+                    $e->getMessage(),
+
+                'line' =>
+                    $e->getLine(),
+
+                'file' =>
+                    $e->getFile(),
+
+                'trace' =>
+                    $e->getTraceAsString()
+            ]
+        );
+
+
+        return [
+
+            'success' =>
+                false,
+
+            'retry' =>
+                true,
+
+            'message' =>
+                'Payment verification failed.',
+
+            'reference' =>
+                $reference
+        ];
     }
 }
