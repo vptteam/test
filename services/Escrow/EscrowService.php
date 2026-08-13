@@ -1103,200 +1103,512 @@ public function create(
 }
 
 
-    /*
-    |--------------------------------------------------------------------------
-    | INITIALIZE PAYMENT
-    |--------------------------------------------------------------------------
-    */
+   /*
+|--------------------------------------------------------------------------
+| INITIALIZE PAYMENT
+|--------------------------------------------------------------------------
+*/
 
-    public function initializePayment(
+public function initializePayment(
     string $reference,
     string $email,
     string $callback
 ): array {
 
-        try {
+    try {
 
-            $escrowNumber =
-                trim($escrowNumber);
+        $reference = strtoupper(
+            trim($reference)
+        );
 
-
-            if ($escrowNumber === '') {
-
-                return [
-                    'success' => false,
-                    'message' => 'Escrow number is required.'
-                ];
-            }
+        $email = trim($email);
+        $callback = trim($callback);
 
 
-            $escrow = $this->escrowModel->findByReference(
-    $reference
-);
+        Logger::write(
+            'escrow_service',
+            [
+                'step'      => 'PAYMENT_INITIALIZE_START',
+                'reference' => $reference,
+                'email'     => $email
+            ]
+        );
 
 
-            if (!$escrow) {
+        /*
+        |--------------------------------------------------------------------------
+        | Validate Reference
+        |--------------------------------------------------------------------------
+        */
 
-                return [
-                    'success' => false,
-                    'message' => 'Escrow transaction not found.'
-                ];
-            }
+        if ($reference === '') {
 
-
-            $amount =
-                (float)(
-                    $escrow['amount']
-                    ?? 0
-                );
-
-
-            if ($amount <= 0) {
-
-                return [
-                    'success' => false,
-                    'message' => 'Invalid escrow amount.'
-                ];
-            }
-
-
-            $fees =
-                $this->calculateBuyerTotal(
-                    $amount
-                );
-
-
-            $reference =
-                $escrow['payment_reference']
-                ?? (
-                    'ESC-' .
-                    strtoupper(
-                        $escrowNumber
-                    ) .
-                    '-' .
-                    time()
-                );
-
-
-            $metadata = [
-
-                'type' =>
-                    'escrow_payment',
-
-                'escrow_reference' => $reference,
-
-                'escrow_id' =>
-                    $escrow['id']
-                    ?? null,
-
-                'buyer_id' =>
-                    $escrow['buyer_id']
-                    ?? null,
-
-                'seller_id' =>
-                    $escrow['seller_id']
-                    ?? null,
-
-                'escrow_amount' =>
-                    $fees['amount'],
-
-                'escrow_fee' =>
-                    $fees['escrow_fee'],
-
-                'paystack_fee' =>
-                    $fees['paystack_fee']
+            return [
+                'success' => false,
+                'message' => 'Escrow reference is required.'
             ];
+        }
 
+
+        /*
+        |--------------------------------------------------------------------------
+        | Validate Email
+        |--------------------------------------------------------------------------
+        */
+
+        if ($email === '') {
+
+            return [
+                'success' => false,
+                'message' => 'Buyer email is required.'
+            ];
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Find Escrow
+        |--------------------------------------------------------------------------
+        */
+
+        $escrow =
+            $this->escrowModel->findByReference(
+                $reference
+            );
+
+
+        Logger::write(
+            'escrow_service',
+            [
+                'step'      => 'PAYMENT_ESCROW_LOOKUP',
+                'reference' => $reference,
+                'found'     => is_array($escrow)
+            ]
+        );
+
+
+        if (
+            !is_array($escrow)
+            ||
+            empty($escrow['id'])
+        ) {
+
+            return [
+                'success' => false,
+                'message' => 'Escrow transaction not found.'
+            ];
+        }
+
+
+        $escrowId =
+            (int)$escrow['id'];
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Check Existing Payment
+        |--------------------------------------------------------------------------
+        */
+
+        $existingPaymentReference =
+            trim(
+                (string)(
+                    $escrow['payment_reference']
+                    ?? ''
+                )
+            );
+
+
+        $status =
+            strtolower(
+                trim(
+                    (string)(
+                        $escrow['status']
+                        ?? ''
+                    )
+                )
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Do Not Initialize A New Payment For A Paid Escrow
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            $existingPaymentReference !== ''
+            &&
+            in_array(
+                $status,
+                [
+                    'paid',
+                    'item_sent',
+                    'awaiting_payout',
+                    'completed'
+                ],
+                true
+            )
+        ) {
 
             Logger::write(
                 'escrow_service',
                 [
-                    'step'         => 'PAYMENT_INITIALIZE',
-                    'escrow_number'=> $escrowNumber,
-                    'reference'    => $reference,
-                    'fees'         => $fees
+                    'step' =>
+                        'PAYMENT_ALREADY_PROCESSED',
+
+                    'reference' =>
+                        $reference,
+
+                    'escrow_id' =>
+                        $escrowId,
+
+                    'status' =>
+                        $status,
+
+                    'payment_reference' =>
+                        $existingPaymentReference
                 ]
             );
 
 
-            $payment =
-                $this->paystack->initialize(
-                    (int)round(
-                        $fees['buyer_total']
-                    ),
-                    $email,
-                    $reference,
-                    $callback,
-                    $metadata
-                );
-
-
-            if (
-                !($payment['success'] ?? false)
-            ) {
-
-                return $payment;
-            }
-
-
             return [
+
                 'success' =>
-                    true,
+                    false,
 
-                'escrow' =>
-                    $escrow,
-
-                'amount' =>
-                    $fees['amount'],
-
-                'escrow_fee' =>
-                    $fees['escrow_fee'],
-
-                'paystack_fee' =>
-                    $fees['paystack_fee'],
-
-                'total' =>
-                    $fees['buyer_total'],
-
-                'authorization_url' =>
-                    $payment['authorization_url']
-                    ?? null,
-
-                'access_code' =>
-                    $payment['access_code']
-                    ?? null,
+                'message' =>
+                    'This escrow payment has already been processed.',
 
                 'reference' =>
-                    $payment['reference']
-                    ?? $reference,
+                    $reference,
 
-                'raw' =>
-                    $payment['raw']
-                    ?? null
+                'payment_reference' =>
+                    $existingPaymentReference
             ];
+        }
 
 
-        } catch (Throwable $e) {
+        /*
+        |--------------------------------------------------------------------------
+        | Resolve Amount
+        |--------------------------------------------------------------------------
+        */
+
+        $amount =
+            (float)(
+                $escrow['amount']
+                ?? 0
+            );
+
+
+        if ($amount <= 0) {
 
             Logger::write(
-                'escrow_payment_error',
+                'escrow_service_error',
                 [
-                    'step'    => 'INITIALIZE_EXCEPTION',
-                    'escrow'  => $escrowNumber,
-                    'message' => $e->getMessage(),
-                    'line'    => $e->getLine(),
-                    'file'    => $e->getFile()
+                    'step'      => 'PAYMENT_INVALID_AMOUNT',
+                    'reference' => $reference,
+                    'escrow_id' => $escrowId,
+                    'amount'    => $amount
                 ]
             );
 
 
             return [
                 'success' => false,
-                'message' => 'Unable to initialize escrow payment.'
+                'message' => 'Invalid escrow amount.'
             ];
         }
-    }
 
+
+        /*
+        |--------------------------------------------------------------------------
+        | Calculate Buyer Total
+        |--------------------------------------------------------------------------
+        */
+
+        $fees =
+            $this->calculateBuyerTotal(
+                $amount
+            );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Generate Payment Reference
+        |--------------------------------------------------------------------------
+        |
+        | IMPORTANT:
+        |
+        | $reference = escrow reference
+        |
+        | $paymentReference = Paystack transaction reference
+        |
+        | They are NOT the same thing.
+        |
+        */
+
+        $paymentReference =
+            $existingPaymentReference;
+
+
+        if ($paymentReference === '') {
+
+            $paymentReference =
+                'PAY-'
+                .
+                $reference
+                .
+                '-'
+                .
+                date('YmdHis')
+                .
+                '-'
+                .
+                random_int(
+                    1000,
+                    9999
+                );
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Payment Metadata
+        |--------------------------------------------------------------------------
+        */
+
+        $metadata = [
+
+            'type' =>
+                'escrow_payment',
+
+            'escrow_reference' =>
+                $reference,
+
+            'escrow_id' =>
+                $escrowId,
+
+            'listing_id' =>
+                $escrow['listing_id']
+                ?? null,
+
+            'buyer_id' =>
+                $escrow['buyer_id']
+                ?? null,
+
+            'seller_id' =>
+                $escrow['seller_id']
+                ?? null,
+
+            'escrow_amount' =>
+                $fees['amount'],
+
+            'escrow_fee' =>
+                $fees['escrow_fee'],
+
+            'paystack_fee' =>
+                $fees['paystack_fee'],
+
+            'buyer_total' =>
+                $fees['buyer_total']
+        ];
+
+
+        Logger::write(
+            'escrow_service',
+            [
+                'step' =>
+                    'PAYMENT_INITIALIZE',
+
+                'escrow_reference' =>
+                    $reference,
+
+                'payment_reference' =>
+                    $paymentReference,
+
+                'escrow_id' =>
+                    $escrowId,
+
+                'fees' =>
+                    $fees
+            ]
+        );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Initialize Paystack
+        |--------------------------------------------------------------------------
+        */
+
+        $payment =
+            $this->paystack->initialize(
+                (int)round(
+                    $fees['buyer_total']
+                ),
+                $email,
+                $paymentReference,
+                $callback,
+                $metadata
+            );
+
+
+        Logger::write(
+            'escrow_service',
+            [
+                'step' =>
+                    'PAYSTACK_INITIALIZE_RESULT',
+
+                'escrow_reference' =>
+                    $reference,
+
+                'payment_reference' =>
+                    $paymentReference,
+
+                'success' =>
+                    $payment['success']
+                    ?? false
+            ]
+        );
+
+
+        if (
+            !($payment['success'] ?? false)
+        ) {
+
+            return $payment;
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Persist Payment Reference
+        |--------------------------------------------------------------------------
+        |
+        | The Paystack reference must be stored against the escrow.
+        |
+        */
+
+        $paystackReference =
+            trim(
+                (string)(
+                    $payment['reference']
+                    ??
+                    $paymentReference
+                )
+            );
+
+
+        if ($paystackReference !== '') {
+
+            $updated =
+                $this->escrowModel->update(
+                    $escrowId,
+                    [
+                        'payment_reference' =>
+                            $paystackReference
+                    ]
+                );
+
+
+            Logger::write(
+                'escrow_service',
+                [
+                    'step' =>
+                        'PAYMENT_REFERENCE_SAVED',
+
+                    'escrow_reference' =>
+                        $reference,
+
+                    'escrow_id' =>
+                        $escrowId,
+
+                    'payment_reference' =>
+                        $paystackReference,
+
+                    'updated' =>
+                        $updated
+                ]
+            );
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Return Payment Information
+        |--------------------------------------------------------------------------
+        */
+
+        return [
+
+            'success' =>
+                true,
+
+            'escrow' =>
+                $escrow,
+
+            'escrow_reference' =>
+                $reference,
+
+            'amount' =>
+                $fees['amount'],
+
+            'escrow_fee' =>
+                $fees['escrow_fee'],
+
+            'paystack_fee' =>
+                $fees['paystack_fee'],
+
+            'total' =>
+                $fees['buyer_total'],
+
+            'authorization_url' =>
+                $payment['authorization_url']
+                ?? null,
+
+            'access_code' =>
+                $payment['access_code']
+                ?? null,
+
+            'reference' =>
+                $paystackReference,
+
+            'payment_reference' =>
+                $paystackReference,
+
+            'raw' =>
+                $payment['raw']
+                ?? null
+        ];
+
+
+    } catch (Throwable $e) {
+
+        Logger::write(
+            'escrow_payment_error',
+            [
+                'step'      => 'INITIALIZE_EXCEPTION',
+                'reference' => $reference,
+                'message'   => $e->getMessage(),
+                'line'      => $e->getLine(),
+                'file'      => $e->getFile(),
+                'trace'     => $e->getTraceAsString()
+            ]
+        );
+
+
+        return [
+
+            'success' =>
+                false,
+
+            'message' =>
+                'Unable to initialize escrow payment.'
+        ];
+    }
+}
 
     /*
     |--------------------------------------------------------------------------
@@ -1352,45 +1664,58 @@ public function create(
     }
 
 
-    /*
+ /*
 |--------------------------------------------------------------------------
 | BUYER PAID
 |--------------------------------------------------------------------------
 */
 
 public function buyerPaid(
-    string $reference
+    string $reference,
+    string $paymentReference
 ): bool {
 
     try {
 
-        $reference = strtoupper(
-            trim($reference)
-        );
+        $reference =
+            strtoupper(
+                trim($reference)
+            );
+
+        $paymentReference =
+            trim($paymentReference);
+
 
         Logger::write(
             'escrow_service',
             [
-                'step'      => 'BUYER_PAID_START',
-                'reference' => $reference
+                'step' =>
+                    'BUYER_PAID_START',
+
+                'reference' =>
+                    $reference,
+
+                'payment_reference' =>
+                    $paymentReference
             ]
         );
 
-        if ($reference === '') {
 
-            Logger::write(
-                'escrow_service_error',
-                [
-                    'step' => 'BUYER_PAID_REFERENCE_MISSING'
-                ]
-            );
+        if ($reference === '') {
 
             return false;
         }
 
+
+        if ($paymentReference === '') {
+
+            return false;
+        }
+
+
         /*
         |--------------------------------------------------------------------------
-        | Find escrow using public reference
+        | Find Escrow
         |--------------------------------------------------------------------------
         */
 
@@ -1398,6 +1723,7 @@ public function buyerPaid(
             $this->escrowModel->findByReference(
                 $reference
             );
+
 
         if (
             !is_array($escrow)
@@ -1408,71 +1734,109 @@ public function buyerPaid(
             Logger::write(
                 'escrow_service_error',
                 [
-                    'step'      => 'BUYER_PAID_ESCROW_NOT_FOUND',
-                    'reference' => $reference
+                    'step' =>
+                        'BUYER_PAID_ESCROW_NOT_FOUND',
+
+                    'reference' =>
+                        $reference
                 ]
             );
 
             return false;
         }
 
+
         $escrowId =
             (int)$escrow['id'];
 
+
         /*
         |--------------------------------------------------------------------------
-        | Call model method
+        | Mark Payment Received
         |--------------------------------------------------------------------------
         */
 
         if (
             !method_exists(
                 $this->escrowModel,
-                'buyerPaid'
+                'markPaid'
             )
         ) {
 
             Logger::write(
                 'escrow_service_error',
                 [
-                    'step'      => 'BUYER_PAID_METHOD_MISSING',
-                    'reference' => $reference,
-                    'escrow_id' => $escrowId
+                    'step' =>
+                        'MARK_PAID_METHOD_MISSING',
+
+                    'reference' =>
+                        $reference,
+
+                    'escrow_id' =>
+                        $escrowId
                 ]
             );
 
             return false;
         }
 
+
         $result =
-            $this->escrowModel->buyerPaid(
-                $escrowId
+            $this->escrowModel->markPaid(
+                $escrowId,
+                $paymentReference
             );
+
 
         Logger::write(
             'escrow_service',
             [
-                'step'      => 'BUYER_PAID_RESULT',
-                'reference' => $reference,
-                'escrow_id' => $escrowId,
-                'result'    => $result
+                'step' =>
+                    'BUYER_PAID_RESULT',
+
+                'reference' =>
+                    $reference,
+
+                'escrow_id' =>
+                    $escrowId,
+
+                'payment_reference' =>
+                    $paymentReference,
+
+                'result' =>
+                    $result
             ]
         );
 
+
         return (bool)$result;
+
 
     } catch (Throwable $e) {
 
         Logger::write(
             'escrow_service_error',
             [
-                'step'      => 'BUYER_PAID_EXCEPTION',
-                'reference' => $reference,
-                'message'   => $e->getMessage(),
-                'file'      => $e->getFile(),
-                'line'      => $e->getLine()
+                'step' =>
+                    'BUYER_PAID_EXCEPTION',
+
+                'reference' =>
+                    $reference,
+
+                'payment_reference' =>
+                    $paymentReference,
+
+                'message' =>
+                    $e->getMessage(),
+
+                'file' =>
+                    $e->getFile(),
+
+                'line' =>
+                    $e->getLine()
             ]
         );
+
 
         return false;
     }
