@@ -18,6 +18,12 @@ class PaystackEscrowPaymentService
 
     protected PaystackGateway $gateway;
 
+
+    /**
+     * ---------------------------------------------------------
+     * Constructor
+     * ---------------------------------------------------------
+     */
     public function __construct()
     {
         $this->escrowModel =
@@ -37,29 +43,35 @@ class PaystackEscrowPaymentService
 
     /**
      * ---------------------------------------------------------
-     * INITIALIZE ESCROW PAYMENT
+     * Initialize Escrow Payment
      * ---------------------------------------------------------
      *
-     * Called by:
+     * Flow:
      *
-     * EscrowApiController::payment()
-     *
-     * Endpoint:
-     *
-     * POST /api/escrow/payment
-     *
-     * Expected:
-     *
-     * {
-     *     "reference": "SDM-000033",
-     *     "email": "buyer@example.com"
-     * }
+     * Escrow reference
+     *      ↓
+     * Load escrow
+     *      ↓
+     * Validate pending status
+     *      ↓
+     * Read authoritative total_amount
+     *      ↓
+     * Build metadata
+     *      ↓
+     * Paystack initialize
+     *      ↓
+     * Return authorization URL
      *
      * IMPORTANT:
      *
-     * The client does NOT provide the amount.
+     * The escrow reference is also the Paystack reference.
      *
-     * The amount is loaded from the existing escrow record.
+     * Example:
+     *
+     * ESC000123
+     *
+     * This keeps initialization, verification and webhook
+     * processing deterministic.
      *
      * ---------------------------------------------------------
      */
@@ -69,16 +81,15 @@ class PaystackEscrowPaymentService
         ?string $callbackUrl = null
     ): array {
 
+        $reference =
+            strtoupper(
+                trim($reference)
+            );
+
+        $email =
+            trim($email);
+
         try {
-
-            $reference =
-                strtoupper(
-                    trim($reference)
-                );
-
-            $email =
-                trim($email);
-
 
             Logger::write(
                 'paystack_escrow_payment',
@@ -104,7 +115,9 @@ class PaystackEscrowPaymentService
             |--------------------------------------------------------------------------
             */
 
-            if ($reference === '') {
+            if (
+                $reference === ''
+            ) {
 
                 Logger::write(
                     'paystack_escrow_payment_error',
@@ -161,13 +174,7 @@ class PaystackEscrowPaymentService
 
             /*
             |--------------------------------------------------------------------------
-            | Locate Escrow
-            |--------------------------------------------------------------------------
-            |
-            | We first try the existing model's reference lookup if available.
-            |
-            | This keeps the service compatible with different versions of
-            | the Escrow model.
+            | Find Escrow
             |--------------------------------------------------------------------------
             */
 
@@ -177,7 +184,11 @@ class PaystackEscrowPaymentService
                 );
 
 
-            if (!$escrow) {
+            if (
+                !is_array($escrow)
+                ||
+                empty($escrow)
+            ) {
 
                 Logger::write(
                     'paystack_escrow_payment_error',
@@ -198,6 +209,12 @@ class PaystackEscrowPaymentService
             }
 
 
+            /*
+            |--------------------------------------------------------------------------
+            | Escrow ID
+            |--------------------------------------------------------------------------
+            */
+
             $escrowId =
                 (int)(
                     $escrow['id']
@@ -205,7 +222,9 @@ class PaystackEscrowPaymentService
                 );
 
 
-            if ($escrowId <= 0) {
+            if (
+                $escrowId <= 0
+            ) {
 
                 Logger::write(
                     'paystack_escrow_payment_error',
@@ -231,11 +250,83 @@ class PaystackEscrowPaymentService
 
             /*
             |--------------------------------------------------------------------------
+            | Verify Database Reference
+            |--------------------------------------------------------------------------
+            */
+
+            $databaseReference =
+                strtoupper(
+                    trim(
+                        (string)(
+                            $escrow['reference']
+                            ?? ''
+                        )
+                    )
+                );
+
+
+            if (
+                $databaseReference === ''
+            ) {
+
+                Logger::write(
+                    'paystack_escrow_payment_error',
+                    [
+                        'step' =>
+                            'INITIALIZE_DATABASE_REFERENCE_MISSING',
+
+                        'escrow_id' =>
+                            $escrowId
+                    ]
+                );
+
+                return [
+                    'success' => false,
+                    'message' =>
+                        'Escrow reference is missing.'
+                ];
+            }
+
+
+            if (
+                !hash_equals(
+                    $databaseReference,
+                    $reference
+                )
+            ) {
+
+                Logger::write(
+                    'paystack_escrow_payment_error',
+                    [
+                        'step' =>
+                            'INITIALIZE_REFERENCE_MISMATCH',
+
+                        'requested_reference' =>
+                            $reference,
+
+                        'database_reference' =>
+                            $databaseReference,
+
+                        'escrow_id' =>
+                            $escrowId
+                    ]
+                );
+
+                return [
+                    'success' => false,
+                    'message' =>
+                        'Escrow reference mismatch.'
+                ];
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
             | Escrow Status
             |--------------------------------------------------------------------------
             */
 
-            $escrowStatus =
+            $status =
                 strtolower(
                     trim(
                         (string)(
@@ -250,7 +341,7 @@ class PaystackEscrowPaymentService
                 'paystack_escrow_payment',
                 [
                     'step' =>
-                        'INITIALIZE_ESCROW_LOADED',
+                        'INITIALIZE_ESCROW_STATUS',
 
                     'escrow_id' =>
                         $escrowId,
@@ -259,23 +350,24 @@ class PaystackEscrowPaymentService
                         $reference,
 
                     'status' =>
-                        $escrowStatus
+                        $status
                 ]
             );
 
 
             /*
             |--------------------------------------------------------------------------
-            | Prevent Payment After Escrow Is Already Paid
+            | Prevent Duplicate Payment
             |--------------------------------------------------------------------------
             */
 
             if (
                 in_array(
-                    $escrowStatus,
+                    $status,
                     [
                         'paid',
                         'item_sent',
+                        'awaiting_payout',
                         'buyer_confirmed',
                         'completed'
                     ],
@@ -287,7 +379,7 @@ class PaystackEscrowPaymentService
                     'paystack_escrow_payment',
                     [
                         'step' =>
-                            'INITIALIZE_ALREADY_PAID',
+                            'INITIALIZE_ALREADY_PROCESSED',
 
                         'escrow_id' =>
                             $escrowId,
@@ -296,15 +388,68 @@ class PaystackEscrowPaymentService
                             $reference,
 
                         'status' =>
-                            $escrowStatus
+                            $status
                     ]
                 );
 
                 return [
                     'success' => false,
+
                     'already_processed' => true,
+
                     'message' =>
-                        'This escrow payment has already been processed.'
+                        'This escrow payment has already been processed.',
+
+                    'reference' =>
+                        $reference,
+
+                    'escrow_id' =>
+                        $escrowId,
+
+                    'status' =>
+                        $status
+                ];
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Only Pending Escrows Can Accept Payment
+            |--------------------------------------------------------------------------
+            */
+
+            if (
+                $status !== 'pending'
+            ) {
+
+                Logger::write(
+                    'paystack_escrow_payment_error',
+                    [
+                        'step' =>
+                            'INITIALIZE_INVALID_STATUS',
+
+                        'escrow_id' =>
+                            $escrowId,
+
+                        'reference' =>
+                            $reference,
+
+                        'status' =>
+                            $status
+                    ]
+                );
+
+                return [
+                    'success' => false,
+
+                    'message' =>
+                        'This escrow cannot currently accept payment.',
+
+                    'reference' =>
+                        $reference,
+
+                    'status' =>
+                        $status
                 ];
             }
 
@@ -313,6 +458,11 @@ class PaystackEscrowPaymentService
             |--------------------------------------------------------------------------
             | Determine Authoritative Amount
             |--------------------------------------------------------------------------
+            |
+            | total_amount = amount actually charged to buyer.
+            |
+            | This is what Paystack must receive.
+            |
             */
 
             $amount =
@@ -321,7 +471,9 @@ class PaystackEscrowPaymentService
                 );
 
 
-            if ($amount <= 0) {
+            if (
+                $amount <= 0
+            ) {
 
                 Logger::write(
                     'paystack_escrow_payment_error',
@@ -335,8 +487,8 @@ class PaystackEscrowPaymentService
                         'reference' =>
                             $reference,
 
-                        'escrow' =>
-                            $escrow
+                        'amount' =>
+                            $amount
                     ]
                 );
 
@@ -350,7 +502,7 @@ class PaystackEscrowPaymentService
 
             /*
             |--------------------------------------------------------------------------
-            | Paystack Callback
+            | Callback URL
             |--------------------------------------------------------------------------
             */
 
@@ -364,11 +516,44 @@ class PaystackEscrowPaymentService
                     $this->defaultCallbackUrl();
             }
 
+            $callbackUrl =
+                trim($callbackUrl);
+
+
+            if (
+                $callbackUrl === ''
+            ) {
+
+                Logger::write(
+                    'paystack_escrow_payment_error',
+                    [
+                        'step' =>
+                            'INITIALIZE_CALLBACK_MISSING',
+
+                        'reference' =>
+                            $reference
+                    ]
+                );
+
+                return [
+                    'success' => false,
+                    'message' =>
+                        'Payment callback URL is not configured.'
+                ];
+            }
+
 
             /*
             |--------------------------------------------------------------------------
-            | Paystack Metadata
+            | Payment Metadata
             |--------------------------------------------------------------------------
+            |
+            | IMPORTANT:
+            |
+            | type MUST be "escrow"
+            |
+            | because process() uses this to identify escrow payments.
+            |
             */
 
             $metadata = [
@@ -387,15 +572,47 @@ class PaystackEscrowPaymentService
 
                 'source' =>
                     'sendam_escrow'
-
             ];
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Optional Metadata
+            |--------------------------------------------------------------------------
+            */
+
+            if (
+                isset($escrow['listing_id'])
+            ) {
+
+                $metadata['listing_id'] =
+                    $escrow['listing_id'];
+            }
+
+
+            if (
+                isset($escrow['buyer_id'])
+            ) {
+
+                $metadata['buyer_id'] =
+                    $escrow['buyer_id'];
+            }
+
+
+            if (
+                isset($escrow['seller_id'])
+            ) {
+
+                $metadata['seller_id'] =
+                    $escrow['seller_id'];
+            }
 
 
             Logger::write(
                 'paystack_escrow_payment',
                 [
                     'step' =>
-                        'PAYSTACK_INITIALIZE_START',
+                        'INITIALIZE_PAYSTACK_REQUEST',
 
                     'escrow_id' =>
                         $escrowId,
@@ -403,7 +620,7 @@ class PaystackEscrowPaymentService
                     'reference' =>
                         $reference,
 
-                    'amount' =>
+                    'amount_ngn' =>
                         $amount,
 
                     'email' =>
@@ -420,13 +637,27 @@ class PaystackEscrowPaymentService
 
             /*
             |--------------------------------------------------------------------------
-            | IMPORTANT PAYMENT REFERENCE
+            | Paystack Reference
             |--------------------------------------------------------------------------
             |
-            | The escrow reference itself is used as the Paystack reference.
+            | ONE reference throughout the entire payment lifecycle.
             |
-            | This makes verification and webhook processing deterministic.
-            |--------------------------------------------------------------------------
+            | Escrow reference:
+            |
+            |     ESC000123
+            |
+            | Paystack reference:
+            |
+            |     ESC000123
+            |
+            | Webhook reference:
+            |
+            |     ESC000123
+            |
+            | markPaid():
+            |
+            |     ESC000123
+            |
             */
 
             $paystackReference =
@@ -441,7 +672,7 @@ class PaystackEscrowPaymentService
 
             $result =
                 $this->gateway->initialize(
-                    $amount,
+                    (int)round($amount),
                     $email,
                     $paystackReference,
                     $callbackUrl,
@@ -453,7 +684,7 @@ class PaystackEscrowPaymentService
                 'paystack_escrow_payment',
                 [
                     'step' =>
-                        'PAYSTACK_INITIALIZE_RESULT',
+                        'INITIALIZE_PAYSTACK_RESULT',
 
                     'escrow_id' =>
                         $escrowId,
@@ -461,11 +692,26 @@ class PaystackEscrowPaymentService
                     'reference' =>
                         $reference,
 
-                    'result' =>
-                        $result
+                    'result_success' =>
+                        $result['success']
+                        ?? false,
+
+                    'paystack_reference' =>
+                        $result['reference']
+                        ?? null,
+
+                    'authorization_url' =>
+                        $result['authorization_url']
+                        ?? null
                 ]
             );
 
+
+            /*
+            |--------------------------------------------------------------------------
+            | Paystack Initialization Failed
+            |--------------------------------------------------------------------------
+            */
 
             if (
                 !is_array($result)
@@ -475,19 +721,173 @@ class PaystackEscrowPaymentService
 
                 return [
                     'success' => false,
+
                     'message' =>
                         $result['message']
                         ??
-                        'Unable to initialize escrow payment.'
+                        'Unable to initialize escrow payment.',
+
+                    'reference' =>
+                        $reference,
+
+                    'raw' =>
+                        $result['raw']
+                        ?? null
                 ];
             }
 
 
             /*
             |--------------------------------------------------------------------------
-            | Final Response
+            | Verify Returned Reference
             |--------------------------------------------------------------------------
             */
+
+            $returnedReference =
+                strtoupper(
+                    trim(
+                        (string)(
+                            $result['reference']
+                            ??
+                            $paystackReference
+                        )
+                    )
+                );
+
+
+            if (
+                $returnedReference === ''
+            ) {
+
+                Logger::write(
+                    'paystack_escrow_payment_error',
+                    [
+                        'step' =>
+                            'INITIALIZE_PAYSTACK_REFERENCE_MISSING',
+
+                        'reference' =>
+                            $reference,
+
+                        'result' =>
+                            $result
+                    ]
+                );
+
+                return [
+                    'success' => false,
+                    'message' =>
+                        'Paystack did not return a transaction reference.'
+                ];
+            }
+
+
+            if (
+                !hash_equals(
+                    $reference,
+                    $returnedReference
+                )
+            ) {
+
+                Logger::write(
+                    'paystack_escrow_payment_error',
+                    [
+                        'step' =>
+                            'INITIALIZE_PAYSTACK_REFERENCE_MISMATCH',
+
+                        'escrow_reference' =>
+                            $reference,
+
+                        'paystack_reference' =>
+                            $returnedReference
+                    ]
+                );
+
+                return [
+                    'success' => false,
+
+                    'message' =>
+                        'Paystack returned an unexpected payment reference.',
+
+                    'reference' =>
+                        $reference,
+
+                    'paystack_reference' =>
+                        $returnedReference
+                ];
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Authorization URL
+            |--------------------------------------------------------------------------
+            */
+
+            $authorizationUrl =
+                trim(
+                    (string)(
+                        $result['authorization_url']
+                        ?? ''
+                    )
+                );
+
+
+            if (
+                $authorizationUrl === ''
+            ) {
+
+                Logger::write(
+                    'paystack_escrow_payment_error',
+                    [
+                        'step' =>
+                            'INITIALIZE_AUTHORIZATION_URL_MISSING',
+
+                        'reference' =>
+                            $reference,
+
+                        'result' =>
+                            $result
+                    ]
+                );
+
+                return [
+                    'success' => false,
+
+                    'message' =>
+                        'Paystack did not return a payment link.',
+
+                    'reference' =>
+                        $reference
+                ];
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Complete
+            |--------------------------------------------------------------------------
+            */
+
+            Logger::write(
+                'paystack_escrow_payment',
+                [
+                    'step' =>
+                        'INITIALIZE_COMPLETE',
+
+                    'escrow_id' =>
+                        $escrowId,
+
+                    'reference' =>
+                        $reference,
+
+                    'paystack_reference' =>
+                        $returnedReference,
+
+                    'amount' =>
+                        $amount
+                ]
+            );
+
 
             return [
 
@@ -503,10 +903,11 @@ class PaystackEscrowPaymentService
                 'reference' =>
                     $reference,
 
+                'payment_reference' =>
+                    $returnedReference,
+
                 'paystack_reference' =>
-                    $result['reference']
-                    ??
-                    $paystackReference,
+                    $returnedReference,
 
                 'amount' =>
                     $amount,
@@ -515,19 +916,17 @@ class PaystackEscrowPaymentService
                     'NGN',
 
                 'authorization_url' =>
-                    $result['authorization_url']
-                    ??
-                    null,
+                    $authorizationUrl,
 
                 'access_code' =>
                     $result['access_code']
-                    ??
-                    null
+                    ?? null,
 
+                'escrow' =>
+                    $escrow
             ];
 
-        }
-        catch (Throwable $e) {
+        } catch (Throwable $e) {
 
             Logger::write(
                 'paystack_escrow_payment_error',
@@ -537,6 +936,9 @@ class PaystackEscrowPaymentService
 
                     'reference' =>
                         $reference,
+
+                    'email' =>
+                        $email,
 
                     'message' =>
                         $e->getMessage(),
@@ -554,6 +956,7 @@ class PaystackEscrowPaymentService
 
             return [
                 'success' => false,
+
                 'message' =>
                     'Unable to initialize escrow payment.'
             ];
@@ -563,18 +966,15 @@ class PaystackEscrowPaymentService
 
     /**
      * ---------------------------------------------------------
-     * PROCESS VERIFIED PAYMENT
+     * Process Verified Paystack Escrow Payment
      * ---------------------------------------------------------
-     *
-     * Called by:
-     *
-     * EscrowPaystackWebhookListener
      *
      * IMPORTANT:
      *
-     * The listener has ALREADY verified the Paystack transaction.
+     * The caller should already have verified the Paystack
+     * transaction using PaystackGateway::verify().
      *
-     * Therefore this method MUST NOT call PaystackVerifier again.
+     * This method does NOT call Paystack again.
      *
      * ---------------------------------------------------------
      */
@@ -614,7 +1014,7 @@ class PaystackEscrowPaymentService
             */
 
             if (
-                $transaction === []
+                empty($transaction)
             ) {
 
                 return [
@@ -629,14 +1029,6 @@ class PaystackEscrowPaymentService
             if (
                 $reference === ''
             ) {
-
-                Logger::write(
-                    'paystack_escrow_payment_error',
-                    [
-                        'step' =>
-                            'PROCESS_REFERENCE_MISSING'
-                    ]
-                );
 
                 return [
                     'success' => false,
@@ -699,8 +1091,7 @@ class PaystackEscrowPaymentService
 
             $metadata =
                 $transaction['metadata']
-                ??
-                [];
+                ?? [];
 
 
             if (
@@ -709,21 +1100,6 @@ class PaystackEscrowPaymentService
 
                 $metadata = [];
             }
-
-
-            Logger::write(
-                'paystack_escrow_payment',
-                [
-                    'step' =>
-                        'PROCESS_METADATA',
-
-                    'reference' =>
-                        $reference,
-
-                    'metadata' =>
-                        $metadata
-                ]
-            );
 
 
             /*
@@ -743,8 +1119,19 @@ class PaystackEscrowPaymentService
                 );
 
 
+            /*
+            | Accept legacy "escrow_payment" as well.
+            */
+
             if (
-                $paymentType !== 'escrow'
+                !in_array(
+                    $paymentType,
+                    [
+                        'escrow',
+                        'escrow_payment'
+                    ],
+                    true
+                )
             ) {
 
                 Logger::write(
@@ -783,7 +1170,9 @@ class PaystackEscrowPaymentService
                 );
 
 
-            if ($escrowId <= 0) {
+            if (
+                $escrowId <= 0
+            ) {
 
                 Logger::write(
                     'paystack_escrow_payment_error',
@@ -814,21 +1203,6 @@ class PaystackEscrowPaymentService
             |--------------------------------------------------------------------------
             */
 
-            Logger::write(
-                'paystack_escrow_payment',
-                [
-                    'step' =>
-                        'PROCESS_ESCROW_LOOKUP',
-
-                    'escrow_id' =>
-                        $escrowId,
-
-                    'reference' =>
-                        $reference
-                ]
-            );
-
-
             $escrow =
                 $this->escrowModel->find(
                     $escrowId
@@ -838,7 +1212,7 @@ class PaystackEscrowPaymentService
             if (
                 !is_array($escrow)
                 ||
-                $escrow === []
+                empty($escrow)
             ) {
 
                 Logger::write(
@@ -885,17 +1259,6 @@ class PaystackEscrowPaymentService
                 $escrowReference === ''
             ) {
 
-                Logger::write(
-                    'paystack_escrow_payment_error',
-                    [
-                        'step' =>
-                            'PROCESS_ESCROW_REFERENCE_MISSING',
-
-                        'escrow_id' =>
-                            $escrowId
-                    ]
-                );
-
                 return [
                     'success' => false,
                     'retry' => false,
@@ -907,75 +1270,27 @@ class PaystackEscrowPaymentService
 
             /*
             |--------------------------------------------------------------------------
-            | Prevent Metadata Reference Mismatch
+            | Verify Payment Reference
             |--------------------------------------------------------------------------
+            |
+            | Paystack reference MUST equal escrow reference.
+            |
             */
 
-            $metadataEscrowReference =
-                strtoupper(
-                    trim(
-                        (string)(
-                            $metadata['escrow_reference']
-                            ?? ''
-                        )
-                    )
-                );
-
-
             if (
-                $metadataEscrowReference !== ''
-                &&
-                $metadataEscrowReference !== $escrowReference
+                !hash_equals(
+                    $escrowReference,
+                    $reference
+                )
             ) {
 
                 Logger::write(
                     'paystack_escrow_payment_error',
                     [
                         'step' =>
-                            'ESCROW_REFERENCE_MISMATCH',
+                            'PROCESS_REFERENCE_MISMATCH',
 
                         'payment_reference' =>
-                            $reference,
-
-                        'metadata_reference' =>
-                            $metadataEscrowReference,
-
-                        'database_reference' =>
-                            $escrowReference,
-
-                        'escrow_id' =>
-                            $escrowId
-                    ]
-                );
-
-                return [
-                    'success' => false,
-                    'retry' => false,
-                    'message' =>
-                        'Escrow reference mismatch.'
-                ];
-            }
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Paystack Reference Must Match Escrow Reference
-            |--------------------------------------------------------------------------
-            */
-
-            if (
-                strtoupper($reference)
-                !==
-                $escrowReference
-            ) {
-
-                Logger::write(
-                    'paystack_escrow_payment_error',
-                    [
-                        'step' =>
-                            'PAYSTACK_REFERENCE_MISMATCH',
-
-                        'paystack_reference' =>
                             $reference,
 
                         'escrow_reference' =>
@@ -997,12 +1312,62 @@ class PaystackEscrowPaymentService
 
             /*
             |--------------------------------------------------------------------------
-            | Verify Amount
+            | Verify Metadata Escrow Reference
             |--------------------------------------------------------------------------
-            |
-            | Paystack returns amount in kobo.
-            |
-            | Escrow amount is expected in naira.
+            */
+
+            $metadataReference =
+                strtoupper(
+                    trim(
+                        (string)(
+                            $metadata['escrow_reference']
+                            ?? ''
+                        )
+                    )
+                );
+
+
+            if (
+                $metadataReference !== ''
+                &&
+                !hash_equals(
+                    $escrowReference,
+                    $metadataReference
+                )
+            ) {
+
+                Logger::write(
+                    'paystack_escrow_payment_error',
+                    [
+                        'step' =>
+                            'PROCESS_METADATA_REFERENCE_MISMATCH',
+
+                        'payment_reference' =>
+                            $reference,
+
+                        'metadata_reference' =>
+                            $metadataReference,
+
+                        'escrow_reference' =>
+                            $escrowReference,
+
+                        'escrow_id' =>
+                            $escrowId
+                    ]
+                );
+
+                return [
+                    'success' => false,
+                    'retry' => false,
+                    'message' =>
+                        'Escrow reference mismatch.'
+                ];
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Amount Validation
             |--------------------------------------------------------------------------
             */
 
@@ -1017,36 +1382,6 @@ class PaystackEscrowPaymentService
                     $transaction['amount']
                     ?? 0
                 );
-
-
-            $paystackAmountNaira =
-                $paystackAmountKobo > 0
-                ? $paystackAmountKobo / 100
-                : 0;
-
-
-            Logger::write(
-                'paystack_escrow_payment',
-                [
-                    'step' =>
-                        'AMOUNT_VALIDATION',
-
-                    'escrow_id' =>
-                        $escrowId,
-
-                    'reference' =>
-                        $reference,
-
-                    'escrow_amount' =>
-                        $escrowAmount,
-
-                    'paystack_amount_kobo' =>
-                        $paystackAmountKobo,
-
-                    'paystack_amount_naira' =>
-                        $paystackAmountNaira
-                ]
-            );
 
 
             if (
@@ -1077,10 +1412,7 @@ class PaystackEscrowPaymentService
 
             /*
             |--------------------------------------------------------------------------
-            | Compare Using Kobo
-            |--------------------------------------------------------------------------
-            |
-            | Avoid floating-point comparison.
+            | Compare In Kobo
             |--------------------------------------------------------------------------
             */
 
@@ -1100,7 +1432,7 @@ class PaystackEscrowPaymentService
                     'paystack_escrow_payment_error',
                     [
                         'step' =>
-                            'AMOUNT_MISMATCH',
+                            'PROCESS_AMOUNT_MISMATCH',
 
                         'escrow_id' =>
                             $escrowId,
@@ -1127,7 +1459,56 @@ class PaystackEscrowPaymentService
 
             /*
             |--------------------------------------------------------------------------
-            | Duplicate Protection
+            | Currency Validation
+            |--------------------------------------------------------------------------
+            */
+
+            $currency =
+                strtoupper(
+                    trim(
+                        (string)(
+                            $transaction['currency']
+                            ?? ''
+                        )
+                    )
+                );
+
+
+            if (
+                $currency !== ''
+                &&
+                $currency !== 'NGN'
+            ) {
+
+                Logger::write(
+                    'paystack_escrow_payment_error',
+                    [
+                        'step' =>
+                            'PROCESS_CURRENCY_MISMATCH',
+
+                        'escrow_id' =>
+                            $escrowId,
+
+                        'reference' =>
+                            $reference,
+
+                        'currency' =>
+                            $currency
+                    ]
+                );
+
+                return [
+                    'success' => false,
+                    'retry' => false,
+                    'message' =>
+                        'Payment currency is not supported.'
+                ];
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Duplicate / Already Paid
             |--------------------------------------------------------------------------
             */
 
@@ -1148,6 +1529,7 @@ class PaystackEscrowPaymentService
                     [
                         'paid',
                         'item_sent',
+                        'awaiting_payout',
                         'buyer_confirmed',
                         'completed'
                     ],
@@ -1159,7 +1541,7 @@ class PaystackEscrowPaymentService
                     'paystack_escrow_payment',
                     [
                         'step' =>
-                            'ALREADY_PROCESSED',
+                            'PROCESS_ALREADY_PROCESSED',
 
                         'escrow_id' =>
                             $escrowId,
@@ -1176,12 +1558,16 @@ class PaystackEscrowPaymentService
                     'success' => true,
                     'retry' => false,
                     'already_processed' => true,
+
                     'message' =>
                         'Escrow payment has already been processed.',
+
                     'reference' =>
                         $escrowReference,
+
                     'escrow_id' =>
                         $escrowId,
+
                     'status' =>
                         $status
                 ];
@@ -1198,7 +1584,7 @@ class PaystackEscrowPaymentService
                 'paystack_escrow_payment',
                 [
                     'step' =>
-                        'MARK_PAID_START',
+                        'PROCESS_MARK_PAID_START',
 
                     'escrow_id' =>
                         $escrowId,
@@ -1220,7 +1606,7 @@ class PaystackEscrowPaymentService
                 'paystack_escrow_payment',
                 [
                     'step' =>
-                        'MARK_PAID_RESULT',
+                        'PROCESS_MARK_PAID_RESULT',
 
                     'escrow_id' =>
                         $escrowId,
@@ -1238,11 +1624,103 @@ class PaystackEscrowPaymentService
                 $paid === false
             ) {
 
+                /*
+                 * Reload once.
+                 *
+                 * Another webhook may have completed the
+                 * atomic transition before this request.
+                 */
+
+                $after =
+                    $this->escrowModel->find(
+                        $escrowId
+                    );
+
+
+                if (
+                    is_array($after)
+                ) {
+
+                    $afterStatus =
+                        strtolower(
+                            trim(
+                                (string)(
+                                    $after['status']
+                                    ?? ''
+                                )
+                            )
+                        );
+
+                    $afterReference =
+                        strtoupper(
+                            trim(
+                                (string)(
+                                    $after['payment_reference']
+                                    ?? ''
+                                )
+                            )
+                        );
+
+
+                    if (
+                        in_array(
+                            $afterStatus,
+                            [
+                                'paid',
+                                'item_sent',
+                                'awaiting_payout',
+                                'buyer_confirmed',
+                                'completed'
+                            ],
+                            true
+                        )
+                        &&
+                        $afterReference === $reference
+                    ) {
+
+                        Logger::write(
+                            'paystack_escrow_payment',
+                            [
+                                'step' =>
+                                    'PROCESS_CONCURRENT_PAYMENT_CONFIRMED',
+
+                                'escrow_id' =>
+                                    $escrowId,
+
+                                'reference' =>
+                                    $reference,
+
+                                'status' =>
+                                    $afterStatus
+                            ]
+                        );
+
+                        return [
+                            'success' => true,
+                            'retry' => false,
+                            'already_processed' => true,
+
+                            'message' =>
+                                'Escrow payment has already been processed.',
+
+                            'reference' =>
+                                $escrowReference,
+
+                            'escrow_id' =>
+                                $escrowId,
+
+                            'status' =>
+                                $afterStatus
+                        ];
+                    }
+                }
+
+
                 Logger::write(
                     'paystack_escrow_payment_error',
                     [
                         'step' =>
-                            'MARK_PAID_FAILED',
+                            'PROCESS_MARK_PAID_FAILED',
 
                         'escrow_id' =>
                             $escrowId,
@@ -1276,7 +1754,7 @@ class PaystackEscrowPaymentService
 
             /*
             |--------------------------------------------------------------------------
-            | Messages
+            | Buyer Message
             |--------------------------------------------------------------------------
             */
 
@@ -1291,6 +1769,12 @@ class PaystackEscrowPaymentService
                 .
                 $escrowReference;
 
+
+            /*
+            |--------------------------------------------------------------------------
+            | Seller Message
+            |--------------------------------------------------------------------------
+            */
 
             $sellerMessage =
                 "A buyer has successfully paid.\n\n"
@@ -1353,28 +1837,37 @@ class PaystackEscrowPaymentService
                         $escrowId,
 
                     'reference' =>
-                        $escrowReference
+                        $escrowReference,
+
+                    'status' =>
+                        $escrow['status']
+                        ?? 'paid'
                 ]
             );
 
 
             return [
                 'success' => true,
+
                 'retry' => false,
+
                 'already_processed' => false,
+
                 'message' =>
                     'Escrow payment secured successfully.',
+
                 'reference' =>
                     $escrowReference,
+
                 'escrow_id' =>
                     $escrowId,
+
                 'status' =>
                     $escrow['status']
                     ?? 'paid'
             ];
 
-        }
-        catch (Throwable $e) {
+        } catch (Throwable $e) {
 
             Logger::write(
                 'paystack_escrow_payment_error',
@@ -1411,59 +1904,55 @@ class PaystackEscrowPaymentService
 
     /**
      * ---------------------------------------------------------
-     * BACKWARD COMPATIBILITY
+     * Backward Compatibility
      * ---------------------------------------------------------
      *
-     * Older code may still call:
-     *
-     * handleSuccessfulPayment()
-     *
-     * Keep this method temporarily so older callers do not
-     * immediately break.
-     *
-     * IMPORTANT:
-     *
-     * The transaction passed here is expected to already be
-     * verified.
+     * Keep older callers working.
      * ---------------------------------------------------------
      */
     public function handleSuccessfulPayment(
-        array $webhookTransaction
+        array $transaction
     ): array {
 
         Logger::write(
             'paystack_escrow_payment',
             [
                 'step' =>
-                    'LEGACY_HANDLE_REDIRECTED_TO_PROCESS',
+                    'LEGACY_HANDLE_SUCCESSFUL_PAYMENT',
 
                 'reference' =>
-                    $webhookTransaction['reference']
+                    $transaction['reference']
                     ?? null
             ]
         );
 
 
         return $this->process(
-            $webhookTransaction
+            $transaction
         );
     }
 
 
     /**
      * ---------------------------------------------------------
-     * FIND ESCROW BY REFERENCE
+     * Find Escrow By Reference
      * ---------------------------------------------------------
      */
     protected function findEscrowByReference(
         string $reference
     ): ?array {
 
+        $reference =
+            strtoupper(
+                trim($reference)
+            );
+
+
         try {
 
             /*
             |--------------------------------------------------------------------------
-            | Preferred Model Method
+            | Preferred Method
             |--------------------------------------------------------------------------
             */
 
@@ -1486,6 +1975,17 @@ class PaystackEscrowPaymentService
                     !empty($result)
                 ) {
 
+                    Logger::write(
+                        'paystack_escrow_payment',
+                        [
+                            'step' =>
+                                'ESCROW_FOUND_BY_REFERENCE',
+
+                            'reference' =>
+                                $reference
+                        ]
+                    );
+
                     return $result;
                 }
             }
@@ -1493,7 +1993,7 @@ class PaystackEscrowPaymentService
 
             /*
             |--------------------------------------------------------------------------
-            | Alternate Model Method
+            | Legacy Method
             |--------------------------------------------------------------------------
             */
 
@@ -1505,9 +2005,10 @@ class PaystackEscrowPaymentService
             ) {
 
                 $result =
-                    $this->escrowModel->findByEscrowReference(
-                        $reference
-                    );
+                    $this->escrowModel
+                        ->findByEscrowReference(
+                            $reference
+                        );
 
 
                 if (
@@ -1515,6 +2016,17 @@ class PaystackEscrowPaymentService
                     &&
                     !empty($result)
                 ) {
+
+                    Logger::write(
+                        'paystack_escrow_payment',
+                        [
+                            'step' =>
+                                'ESCROW_FOUND_BY_LEGACY_REFERENCE',
+
+                            'reference' =>
+                                $reference
+                        ]
+                    );
 
                     return $result;
                 }
@@ -1525,7 +2037,7 @@ class PaystackEscrowPaymentService
                 'paystack_escrow_payment_error',
                 [
                     'step' =>
-                        'REFERENCE_LOOKUP_METHOD_UNAVAILABLE',
+                        'ESCROW_REFERENCE_LOOKUP_FAILED',
 
                     'reference' =>
                         $reference
@@ -1534,14 +2046,13 @@ class PaystackEscrowPaymentService
 
             return null;
 
-        }
-        catch (Throwable $e) {
+        } catch (Throwable $e) {
 
             Logger::write(
                 'paystack_escrow_payment_error',
                 [
                     'step' =>
-                        'REFERENCE_LOOKUP_EXCEPTION',
+                        'ESCROW_REFERENCE_LOOKUP_EXCEPTION',
 
                     'reference' =>
                         $reference,
@@ -1562,66 +2073,84 @@ class PaystackEscrowPaymentService
     }
 
 
-  protected function extractEscrowAmount(
-    array $escrow
-): float {
-    /*
-    |--------------------------------------------------------------------------
-    | total_amount is the authoritative buyer payment amount.
-    |--------------------------------------------------------------------------
-    |
-    | amount       = underlying item/escrow amount
-    | escrow_fee   = platform escrow fee
-    | paystack_fee = payment processing fee
-    | total_amount = amount actually charged to buyer
-    |
-    */
+    /**
+     * ---------------------------------------------------------
+     * Extract Escrow Amount
+     * ---------------------------------------------------------
+     *
+     * total_amount is authoritative because this is the amount
+     * actually charged to the buyer.
+     *
+     * Fallback to amount for older escrow records.
+     * ---------------------------------------------------------
+     */
+    protected function extractEscrowAmount(
+        array $escrow
+    ): float {
 
-    if (
-        isset($escrow['total_amount'])
-        &&
-        is_numeric($escrow['total_amount'])
-        &&
-        (float)$escrow['total_amount'] > 0
-    ) {
-        return (float)$escrow['total_amount'];
+        /*
+        |--------------------------------------------------------------------------
+        | Preferred: total_amount
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            isset($escrow['total_amount'])
+            &&
+            is_numeric(
+                $escrow['total_amount']
+            )
+            &&
+            (float)$escrow['total_amount'] > 0
+        ) {
+
+            return
+                (float)$escrow['total_amount'];
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Fallback: amount
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            isset($escrow['amount'])
+            &&
+            is_numeric(
+                $escrow['amount']
+            )
+            &&
+            (float)$escrow['amount'] > 0
+        ) {
+
+            return
+                (float)$escrow['amount'];
+        }
+
+
+        return 0.0;
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Backward compatibility
-    |--------------------------------------------------------------------------
-    */
-
-    if (
-        isset($escrow['amount'])
-        &&
-        is_numeric($escrow['amount'])
-        &&
-        (float)$escrow['amount'] > 0
-    ) {
-        return (float)$escrow['amount'];
-    }
-
-    return 0.0;
-}  
 
 
     /**
      * ---------------------------------------------------------
-     * DEFAULT CALLBACK URL
+     * Default Callback URL
      * ---------------------------------------------------------
      */
     protected function defaultCallbackUrl(): string
     {
         /*
         |--------------------------------------------------------------------------
-        | Prefer configured callback
+        | Dedicated Escrow Callback
         |--------------------------------------------------------------------------
         */
 
         if (
-            defined('PAYSTACK_ESCROW_CALLBACK_URL')
+            defined(
+                'PAYSTACK_ESCROW_CALLBACK_URL'
+            )
             &&
             trim(
                 (string)PAYSTACK_ESCROW_CALLBACK_URL
@@ -1636,7 +2165,7 @@ class PaystackEscrowPaymentService
 
         /*
         |--------------------------------------------------------------------------
-        | Generic configured application URL
+        | Application URL
         |--------------------------------------------------------------------------
         */
 
@@ -1648,12 +2177,13 @@ class PaystackEscrowPaymentService
             ) !== ''
         ) {
 
-            return rtrim(
-                (string)APP_URL,
-                '/'
-            )
-            .
-            '/payment/paystack/escrow/callback';
+            return
+                rtrim(
+                    (string)APP_URL,
+                    '/'
+                )
+                .
+                '/payment/paystack/escrow/callback';
         }
 
 
@@ -1670,7 +2200,7 @@ class PaystackEscrowPaymentService
 
     /**
      * ---------------------------------------------------------
-     * QUEUE NOTIFICATIONS
+     * Queue Notifications
      * ---------------------------------------------------------
      */
     protected function queueNotifications(
@@ -1682,7 +2212,7 @@ class PaystackEscrowPaymentService
 
         try {
 
-            $botNotification =
+            $notification =
                 new BotNotification();
 
 
@@ -1692,35 +2222,52 @@ class PaystackEscrowPaymentService
             |--------------------------------------------------------------------------
             */
 
+            $buyerId =
+                (int)(
+                    $escrow['buyer_id']
+                    ?? 0
+                );
+
+
             if (
-                !empty($escrow['buyer_id'])
-                &&
-                !$botNotification->exists(
-                    (int)$escrow['buyer_id'],
-                    'escrow_paid',
-                    $paymentReference
-                )
+                $buyerId > 0
             ) {
 
-                $botNotification->create(
-                    (int)$escrow['buyer_id'],
-                    'escrow_paid',
-                    'Escrow Payment Received',
-                    $buyerMessage,
-                    $paymentReference
-                );
+                $exists =
+                    $notification->exists(
+                        $buyerId,
+                        'escrow_paid',
+                        $paymentReference
+                    );
 
 
-                Logger::write(
-                    'paystack_escrow_payment',
-                    [
-                        'step' =>
-                            'BUYER_NOTIFICATION_CREATED',
+                if (
+                    !$exists
+                ) {
 
-                        'buyer_id' =>
-                            $escrow['buyer_id']
-                    ]
-                );
+                    $notification->create(
+                        $buyerId,
+                        'escrow_paid',
+                        'Escrow Payment Received',
+                        $buyerMessage,
+                        $paymentReference
+                    );
+
+
+                    Logger::write(
+                        'paystack_escrow_payment',
+                        [
+                            'step' =>
+                                'BUYER_NOTIFICATION_CREATED',
+
+                            'buyer_id' =>
+                                $buyerId,
+
+                            'payment_reference' =>
+                                $paymentReference
+                        ]
+                    );
+                }
             }
 
 
@@ -1728,47 +2275,85 @@ class PaystackEscrowPaymentService
             |--------------------------------------------------------------------------
             | Seller
             |--------------------------------------------------------------------------
+            |
+            | IMPORTANT:
+            |
+            | Use a different notification key from the buyer.
+            |
+            | This avoids one user's notification preventing the
+            | other user's notification from being created.
+            |
             */
 
+            $sellerId =
+                (int)(
+                    $escrow['seller_id']
+                    ?? 0
+                );
+
+
             if (
-                !empty($escrow['seller_id'])
-                &&
-                !$botNotification->exists(
-                    (int)$escrow['seller_id'],
-                    'escrow_paid',
-                    $paymentReference
-                )
+                $sellerId > 0
             ) {
 
-                $botNotification->create(
-                    (int)$escrow['seller_id'],
-                    'escrow_paid',
-                    'Buyer Payment Received',
-                    $sellerMessage,
+                $sellerNotificationReference =
                     $paymentReference
-                );
+                    .
+                    ':seller';
 
 
-                Logger::write(
-                    'paystack_escrow_payment',
-                    [
-                        'step' =>
-                            'SELLER_NOTIFICATION_CREATED',
+                $exists =
+                    $notification->exists(
+                        $sellerId,
+                        'escrow_paid',
+                        $sellerNotificationReference
+                    );
 
-                        'seller_id' =>
-                            $escrow['seller_id']
-                    ]
-                );
+
+                if (
+                    !$exists
+                ) {
+
+                    $notification->create(
+                        $sellerId,
+                        'escrow_paid',
+                        'Buyer Payment Received',
+                        $sellerMessage,
+                        $sellerNotificationReference
+                    );
+
+
+                    Logger::write(
+                        'paystack_escrow_payment',
+                        [
+                            'step' =>
+                                'SELLER_NOTIFICATION_CREATED',
+
+                            'seller_id' =>
+                                $sellerId,
+
+                            'payment_reference' =>
+                                $paymentReference
+                        ]
+                    );
+                }
             }
 
-        }
-        catch (Throwable $e) {
+        } catch (Throwable $e) {
+
+            /*
+             * Notification failure MUST NOT undo the successful
+             * financial escrow payment.
+             */
 
             Logger::write(
                 'paystack_escrow_payment_error',
                 [
                     'step' =>
                         'QUEUE_NOTIFICATION_FAILED',
+
+                    'payment_reference' =>
+                        $paymentReference,
 
                     'message' =>
                         $e->getMessage(),
@@ -1777,7 +2362,10 @@ class PaystackEscrowPaymentService
                         $e->getFile(),
 
                     'line' =>
-                        $e->getLine()
+                        $e->getLine(),
+
+                    'trace' =>
+                        $e->getTraceAsString()
                 ]
             );
         }
@@ -1786,7 +2374,7 @@ class PaystackEscrowPaymentService
 
     /**
      * ---------------------------------------------------------
-     * SEND IMMEDIATE MESSAGES
+     * Send Immediate Messages
      * ---------------------------------------------------------
      */
     protected function sendImmediateMessages(
@@ -1807,13 +2395,20 @@ class PaystackEscrowPaymentService
             |--------------------------------------------------------------------------
             */
 
+            $buyerId =
+                (int)(
+                    $escrow['buyer_id']
+                    ?? 0
+                );
+
+
             if (
-                !empty($escrow['buyer_id'])
+                $buyerId > 0
             ) {
 
                 $buyer =
                     $userModel->find(
-                        (int)$escrow['buyer_id']
+                        $buyerId
                     );
 
 
@@ -1822,12 +2417,15 @@ class PaystackEscrowPaymentService
                 ) {
 
                     $platform =
-                        trim(
-                            (string)(
-                                $buyer['platform']
-                                ?? ''
+                        strtolower(
+                            trim(
+                                (string)(
+                                    $buyer['platform']
+                                    ?? ''
+                                )
                             )
                         );
+
 
                     $platformId =
                         trim(
@@ -1844,13 +2442,13 @@ class PaystackEscrowPaymentService
                         $platformId !== ''
                     ) {
 
-                        $buyerReply =
+                        $reply =
                             ReplyFactory::make(
                                 $platform
                             );
 
 
-                        $buyerReply->text(
+                        $reply->text(
                             $platformId,
                             $buyerMessage
                         );
@@ -1863,7 +2461,7 @@ class PaystackEscrowPaymentService
                                     'BUYER_MESSAGE_SENT',
 
                                 'buyer_id' =>
-                                    $escrow['buyer_id'],
+                                    $buyerId,
 
                                 'platform' =>
                                     $platform
@@ -1880,13 +2478,20 @@ class PaystackEscrowPaymentService
             |--------------------------------------------------------------------------
             */
 
+            $sellerId =
+                (int)(
+                    $escrow['seller_id']
+                    ?? 0
+                );
+
+
             if (
-                !empty($escrow['seller_id'])
+                $sellerId > 0
             ) {
 
                 $seller =
                     $userModel->find(
-                        (int)$escrow['seller_id']
+                        $sellerId
                     );
 
 
@@ -1895,12 +2500,15 @@ class PaystackEscrowPaymentService
                 ) {
 
                     $platform =
-                        trim(
-                            (string)(
-                                $seller['platform']
-                                ?? ''
+                        strtolower(
+                            trim(
+                                (string)(
+                                    $seller['platform']
+                                    ?? ''
+                                )
                             )
                         );
+
 
                     $platformId =
                         trim(
@@ -1917,13 +2525,13 @@ class PaystackEscrowPaymentService
                         $platformId !== ''
                     ) {
 
-                        $sellerReply =
+                        $reply =
                             ReplyFactory::make(
                                 $platform
                             );
 
 
-                        $sellerReply->text(
+                        $reply->text(
                             $platformId,
                             $sellerMessage
                         );
@@ -1936,7 +2544,7 @@ class PaystackEscrowPaymentService
                                     'SELLER_MESSAGE_SENT',
 
                                 'seller_id' =>
-                                    $escrow['seller_id'],
+                                    $sellerId,
 
                                 'platform' =>
                                     $platform
@@ -1946,8 +2554,12 @@ class PaystackEscrowPaymentService
                 }
             }
 
-        }
-        catch (Throwable $e) {
+        } catch (Throwable $e) {
+
+            /*
+             * Immediate messaging failure must NOT undo the
+             * successful financial state.
+             */
 
             Logger::write(
                 'paystack_escrow_payment_error',
@@ -1962,7 +2574,10 @@ class PaystackEscrowPaymentService
                         $e->getFile(),
 
                     'line' =>
-                        $e->getLine()
+                        $e->getLine(),
+
+                    'trace' =>
+                        $e->getTraceAsString()
                 ]
             );
         }
