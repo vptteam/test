@@ -6,28 +6,44 @@ namespace Services\Escrow;
 
 use Core\Database;
 use Core\Logger;
+use Models\Listing;
+use Models\User;
 use Modules\Escrow\Models\Escrow;
 use Services\Payments\PaystackGateway;
 use Throwable;
 
 class EscrowService
 {
-    protected Database $db;
+protected Database $db;
 
-    protected Escrow $escrow;
+protected Escrow $escrowModel;
 
-    protected PaystackGateway $paystack;
+protected Listing $listingModel;
+
+protected User $userModel;
+
+protected PaystackGateway $paystack;
 
 
-    public function __construct()
-    {
-        $this->db = Database::getInstance();
+public function __construct()
+{
+    $this->db = Database::getInstance();
 
-        $this->escrow = new Escrow();
+    $this->escrowModel = new Escrow();
 
-        $this->paystack = new PaystackGateway();
-    }
+    $this->listingModel = new Listing();
 
+    $this->userModel = new User();
+
+    $this->paystack = new PaystackGateway();
+
+    Logger::write(
+        'escrow_service',
+        [
+            'step' => 'CONSTRUCTOR'
+        ]
+    );
+}
 
     /*
     |--------------------------------------------------------------------------
@@ -1094,10 +1110,10 @@ public function create(
     */
 
     public function initializePayment(
-        string $escrowNumber,
-        string $email,
-        string $callback
-    ): array {
+    string $reference,
+    string $email,
+    string $callback
+): array {
 
         try {
 
@@ -1114,10 +1130,9 @@ public function create(
             }
 
 
-            $escrow =
-                $this->escrow->findByNumber(
-                    $escrowNumber
-                );
+            $escrow = $this->escrowModel->findByReference(
+    $reference
+);
 
 
             if (!$escrow) {
@@ -1168,8 +1183,7 @@ public function create(
                 'type' =>
                     'escrow_payment',
 
-                'escrow_number' =>
-                    $escrowNumber,
+                'escrow_reference' => $reference,
 
                 'escrow_id' =>
                     $escrow['id']
@@ -1339,63 +1353,130 @@ public function create(
 
 
     /*
-    |--------------------------------------------------------------------------
-    | BUYER PAID
-    |--------------------------------------------------------------------------
-    */
+|--------------------------------------------------------------------------
+| BUYER PAID
+|--------------------------------------------------------------------------
+*/
 
-    public function buyerPaid(
-        string $escrowNumber
-    ): bool {
+public function buyerPaid(
+    string $reference
+): bool {
 
-        try {
+    try {
 
-            $escrowNumber =
-                trim($escrowNumber);
+        $reference = strtoupper(
+            trim($reference)
+        );
 
+        Logger::write(
+            'escrow_service',
+            [
+                'step'      => 'BUYER_PAID_START',
+                'reference' => $reference
+            ]
+        );
 
-            if ($escrowNumber === '') {
-                return false;
-            }
-
-
-            if (!method_exists(
-                $this->escrow,
-                'buyerPaid'
-            )) {
-
-                Logger::write(
-                    'escrow_service_error',
-                    [
-                        'step' =>
-                            'BUYER_PAID_METHOD_MISSING'
-                    ]
-                );
-
-                return false;
-            }
-
-
-            return (bool)$this->escrow->buyerPaid(
-                $escrowNumber
-            );
-
-
-        } catch (Throwable $e) {
+        if ($reference === '') {
 
             Logger::write(
                 'escrow_service_error',
                 [
-                    'step'    => 'BUYER_PAID_EXCEPTION',
-                    'escrow'  => $escrowNumber,
-                    'message' => $e->getMessage()
+                    'step' => 'BUYER_PAID_REFERENCE_MISSING'
                 ]
             );
 
             return false;
         }
-    }
 
+        /*
+        |--------------------------------------------------------------------------
+        | Find escrow using public reference
+        |--------------------------------------------------------------------------
+        */
+
+        $escrow =
+            $this->escrowModel->findByReference(
+                $reference
+            );
+
+        if (
+            !is_array($escrow)
+            ||
+            empty($escrow['id'])
+        ) {
+
+            Logger::write(
+                'escrow_service_error',
+                [
+                    'step'      => 'BUYER_PAID_ESCROW_NOT_FOUND',
+                    'reference' => $reference
+                ]
+            );
+
+            return false;
+        }
+
+        $escrowId =
+            (int)$escrow['id'];
+
+        /*
+        |--------------------------------------------------------------------------
+        | Call model method
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            !method_exists(
+                $this->escrowModel,
+                'buyerPaid'
+            )
+        ) {
+
+            Logger::write(
+                'escrow_service_error',
+                [
+                    'step'      => 'BUYER_PAID_METHOD_MISSING',
+                    'reference' => $reference,
+                    'escrow_id' => $escrowId
+                ]
+            );
+
+            return false;
+        }
+
+        $result =
+            $this->escrowModel->buyerPaid(
+                $escrowId
+            );
+
+        Logger::write(
+            'escrow_service',
+            [
+                'step'      => 'BUYER_PAID_RESULT',
+                'reference' => $reference,
+                'escrow_id' => $escrowId,
+                'result'    => $result
+            ]
+        );
+
+        return (bool)$result;
+
+    } catch (Throwable $e) {
+
+        Logger::write(
+            'escrow_service_error',
+            [
+                'step'      => 'BUYER_PAID_EXCEPTION',
+                'reference' => $reference,
+                'message'   => $e->getMessage(),
+                'file'      => $e->getFile(),
+                'line'      => $e->getLine()
+            ]
+        );
+
+        return false;
+    }
+}
 
     /*
     |--------------------------------------------------------------------------
@@ -1403,336 +1484,630 @@ public function create(
     |--------------------------------------------------------------------------
     */
 
-    public function buyerConfirmed(
-        string $escrowNumber
-    ): bool {
+   public function buyerConfirmed(
+    string $reference
+): bool {
 
-        try {
+    try {
 
-            if (
-                method_exists(
-                    $this->escrow,
-                    'buyerConfirmed'
-                )
-            ) {
+        $reference = strtoupper(
+            trim($reference)
+        );
 
-                return (bool)$this->escrow->buyerConfirmed(
-                    $escrowNumber
-                );
-            }
+        Logger::write(
+            'escrow_service',
+            [
+                'step' => 'BUYER_CONFIRMED_START',
+                'reference' => $reference
+            ]
+        );
 
 
-            if (
-                method_exists(
-                    $this->escrow,
-                    'buyerConfirm'
-                )
-            ) {
+        /*
+        |--------------------------------------------------------------------------
+        | Validate Reference
+        |--------------------------------------------------------------------------
+        */
 
-                return (bool)$this->escrow->buyerConfirm(
-                    $escrowNumber
-                );
-            }
-
+        if ($reference === '') {
 
             Logger::write(
                 'escrow_service_error',
                 [
                     'step' =>
-                        'BUYER_CONFIRM_METHOD_MISSING'
-                ]
-            );
-
-
-            return false;
-
-
-        } catch (Throwable $e) {
-
-            Logger::write(
-                'escrow_service_error',
-                [
-                    'step'    => 'BUYER_CONFIRM_EXCEPTION',
-                    'escrow'  => $escrowNumber,
-                    'message' => $e->getMessage()
+                        'BUYER_CONFIRM_REFERENCE_MISSING'
                 ]
             );
 
             return false;
         }
-    }
 
 
-    /*
-    |--------------------------------------------------------------------------
-    | SELLER CONFIRMATION
-    |--------------------------------------------------------------------------
-    */
+        /*
+        |--------------------------------------------------------------------------
+        | Find Escrow By Public Reference
+        |--------------------------------------------------------------------------
+        */
 
-    public function sellerConfirmed(
-        string $escrowNumber
-    ): bool {
-
-        try {
-
-            if (
-                method_exists(
-                    $this->escrow,
-                    'sellerConfirmed'
-                )
-            ) {
-
-                return (bool)$this->escrow->sellerConfirmed(
-                    $escrowNumber
-                );
-            }
+        $escrow =
+            $this->escrowModel->findByReference(
+                $reference
+            );
 
 
-            if (
-                method_exists(
-                    $this->escrow,
-                    'sellerConfirm'
-                )
-            ) {
+        Logger::write(
+            'escrow_service',
+            [
+                'step' =>
+                    'BUYER_CONFIRM_ESCROW_LOOKUP',
 
-                return (bool)$this->escrow->sellerConfirm(
-                    $escrowNumber
-                );
-            }
+                'reference' =>
+                    $reference,
 
+                'found' =>
+                    is_array($escrow)
+            ]
+        );
+
+
+        if (
+            !is_array($escrow)
+            ||
+            empty($escrow['id'])
+        ) {
 
             Logger::write(
                 'escrow_service_error',
                 [
                     'step' =>
-                        'SELLER_CONFIRM_METHOD_MISSING'
-                ]
-            );
+                        'BUYER_CONFIRM_ESCROW_NOT_FOUND',
 
-
-            return false;
-
-
-        } catch (Throwable $e) {
-
-            Logger::write(
-                'escrow_service_error',
-                [
-                    'step'    => 'SELLER_CONFIRM_EXCEPTION',
-                    'escrow'  => $escrowNumber,
-                    'message' => $e->getMessage()
+                    'reference' =>
+                        $reference
                 ]
             );
 
             return false;
         }
-    }
 
 
-    /*
-    |--------------------------------------------------------------------------
-    | RELEASE
-    |--------------------------------------------------------------------------
-    */
+        /*
+        |--------------------------------------------------------------------------
+        | Resolve Internal Escrow ID
+        |--------------------------------------------------------------------------
+        */
 
-    public function release(
-        string $escrowNumber
-    ): bool {
+        $escrowId =
+            (int)$escrow['id'];
 
-        try {
 
-            if (
-                method_exists(
-                    $this->escrow,
-                    'release'
-                )
-            ) {
+        Logger::write(
+            'escrow_service',
+            [
+                'step' =>
+                    'BUYER_CONFIRM_ESCROW_ID_RESOLVED',
 
-                return (bool)$this->escrow->release(
-                    $escrowNumber
-                );
-            }
+                'reference' =>
+                    $reference,
 
+                'escrow_id' =>
+                    $escrowId,
+
+                'status' =>
+                    $escrow['status']
+                    ?? null
+            ]
+        );
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Confirm Buyer Receipt
+        |--------------------------------------------------------------------------
+        |
+        | The model expects the INTERNAL escrow ID.
+        |
+        */
+
+        if (
+            !method_exists(
+                $this->escrowModel,
+                'buyerConfirm'
+            )
+        ) {
 
             Logger::write(
                 'escrow_service_error',
                 [
                     'step' =>
-                        'RELEASE_METHOD_MISSING'
-                ]
-            );
+                        'BUYER_CONFIRM_METHOD_MISSING',
 
+                    'reference' =>
+                        $reference,
 
-            return false;
-
-
-        } catch (Throwable $e) {
-
-            Logger::write(
-                'escrow_service_error',
-                [
-                    'step'    => 'RELEASE_EXCEPTION',
-                    'escrow'  => $escrowNumber,
-                    'message' => $e->getMessage()
+                    'escrow_id' =>
+                        $escrowId
                 ]
             );
 
             return false;
         }
-    }
 
 
-    /*
-    |--------------------------------------------------------------------------
-    | CANCEL
-    |--------------------------------------------------------------------------
-    */
-
-    public function cancel(
-        string $escrowNumber
-    ): bool {
-
-        try {
-
-            if (
-                method_exists(
-                    $this->escrow,
-                    'cancel'
-                )
-            ) {
-
-                return (bool)$this->escrow->cancel(
-                    $escrowNumber
-                );
-            }
-
-
-            Logger::write(
-                'escrow_service_error',
-                [
-                    'step' =>
-                        'CANCEL_METHOD_MISSING'
-                ]
+        $result =
+            $this->escrowModel->buyerConfirm(
+                $escrowId
             );
 
 
+        Logger::write(
+            'escrow_service',
+            [
+                'step' =>
+                    'BUYER_CONFIRM_RESULT',
+
+                'reference' =>
+                    $reference,
+
+                'escrow_id' =>
+                    $escrowId,
+
+                'result' =>
+                    $result
+            ]
+        );
+
+
+        return (bool)$result;
+
+
+    }
+    catch (Throwable $e) {
+
+        Logger::write(
+            'escrow_service_error',
+            [
+                'step' =>
+                    'BUYER_CONFIRM_EXCEPTION',
+
+                'reference' =>
+                    $reference,
+
+                'message' =>
+                    $e->getMessage(),
+
+                'file' =>
+                    $e->getFile(),
+
+                'line' =>
+                    $e->getLine(),
+
+                'trace' =>
+                    $e->getTraceAsString()
+            ]
+        );
+
+        return false;
+    }
+}
+
+ 
+/*
+|--------------------------------------------------------------------------
+| SELLER CONFIRMATION
+|--------------------------------------------------------------------------
+*/
+
+public function sellerConfirmed(
+    string $reference
+): bool {
+
+    try {
+
+        $reference = strtoupper(
+            trim($reference)
+        );
+
+        if ($reference === '') {
+
             return false;
+        }
 
+        Logger::write(
+            'escrow_service',
+            [
+                'step'      => 'SELLER_CONFIRMED_START',
+                'reference' => $reference
+            ]
+        );
 
-        } catch (Throwable $e) {
+        $escrow =
+            $this->escrowModel->findByReference(
+                $reference
+            );
+
+        if (
+            !is_array($escrow)
+            ||
+            empty($escrow['id'])
+        ) {
 
             Logger::write(
                 'escrow_service_error',
                 [
-                    'step'    => 'CANCEL_EXCEPTION',
-                    'escrow'  => $escrowNumber,
-                    'message' => $e->getMessage()
+                    'step'      => 'SELLER_CONFIRM_ESCROW_NOT_FOUND',
+                    'reference' => $reference
                 ]
             );
 
             return false;
         }
+
+        $escrowId =
+            (int)$escrow['id'];
+
+        /*
+        |--------------------------------------------------------------------------
+        | Prefer sellerConfirm()
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            method_exists(
+                $this->escrowModel,
+                'sellerConfirm'
+            )
+        ) {
+
+            return (bool)$this->escrowModel->sellerConfirm(
+                $escrowId
+            );
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Legacy sellerConfirmed()
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            method_exists(
+                $this->escrowModel,
+                'sellerConfirmed'
+            )
+        ) {
+
+            return (bool)$this->escrowModel->sellerConfirmed(
+                $escrowId
+            );
+        }
+
+        Logger::write(
+            'escrow_service_error',
+            [
+                'step'      => 'SELLER_CONFIRM_METHOD_MISSING',
+                'reference' => $reference,
+                'escrow_id' => $escrowId
+            ]
+        );
+
+        return false;
+
+    } catch (Throwable $e) {
+
+        Logger::write(
+            'escrow_service_error',
+            [
+                'step'      => 'SELLER_CONFIRM_EXCEPTION',
+                'reference' => $reference,
+                'message'   => $e->getMessage(),
+                'file'      => $e->getFile(),
+                'line'      => $e->getLine()
+            ]
+        );
+
+        return false;
     }
-
-
+}
+ 
     /*
-    |--------------------------------------------------------------------------
-    | REFUND
-    |--------------------------------------------------------------------------
-    */
+|--------------------------------------------------------------------------
+| RELEASE
+|--------------------------------------------------------------------------
+*/
 
-    public function refund(
-        string $escrowNumber
-    ): bool {
+public function release(
+    string $reference
+): bool {
 
-        try {
+    try {
 
-            if (!$this->settingBool(
-                'escrow_require_admin_approval',
-                true
-            )) {
+        $reference = strtoupper(
+            trim($reference)
+        );
 
-                Logger::write(
-                    'escrow_service',
-                    [
-                        'step' =>
-                            'REFUND_ADMIN_APPROVAL_DISABLED'
-                    ]
-                );
-            }
+        if ($reference === '') {
+            return false;
+        }
 
-
-            if (
-                method_exists(
-                    $this->escrow,
-                    'refund'
-                )
-            ) {
-
-                return (bool)$this->escrow->refund(
-                    $escrowNumber
-                );
-            }
-
-
-            Logger::write(
-                'escrow_service_error',
-                [
-                    'step' =>
-                        'REFUND_METHOD_MISSING'
-                ]
+        $escrow =
+            $this->escrowModel->findByReference(
+                $reference
             );
 
-
-            return false;
-
-
-        } catch (Throwable $e) {
+        if (
+            !is_array($escrow)
+            ||
+            empty($escrow['id'])
+        ) {
 
             Logger::write(
                 'escrow_service_error',
                 [
-                    'step'    => 'REFUND_EXCEPTION',
-                    'escrow'  => $escrowNumber,
-                    'message' => $e->getMessage()
+                    'step'      => 'RELEASE_ESCROW_NOT_FOUND',
+                    'reference' => $reference
                 ]
             );
 
             return false;
         }
-    }
 
+        $escrowId =
+            (int)$escrow['id'];
 
-    /*
-    |--------------------------------------------------------------------------
-    | FIND
-    |--------------------------------------------------------------------------
-    */
-
-    public function find(
-        string $escrowNumber
-    ): ?array {
-
-        try {
-
-            return $this->escrow->findByNumber(
-                trim($escrowNumber)
-            );
-
-        } catch (Throwable $e) {
+        if (
+            !method_exists(
+                $this->escrowModel,
+                'release'
+            )
+        ) {
 
             Logger::write(
                 'escrow_service_error',
                 [
-                    'step'    => 'FIND_EXCEPTION',
-                    'escrow'  => $escrowNumber,
-                    'message' => $e->getMessage()
+                    'step'      => 'RELEASE_METHOD_MISSING',
+                    'reference' => $reference,
+                    'escrow_id' => $escrowId
                 ]
             );
 
+            return false;
+        }
+
+        return (bool)$this->escrowModel->release(
+            $escrowId
+        );
+
+    } catch (Throwable $e) {
+
+        Logger::write(
+            'escrow_service_error',
+            [
+                'step'      => 'RELEASE_EXCEPTION',
+                'reference' => $reference,
+                'message'   => $e->getMessage(),
+                'file'      => $e->getFile(),
+                'line'      => $e->getLine()
+            ]
+        );
+
+        return false;
+    }
+}
+
+
+    /*
+|--------------------------------------------------------------------------
+| CANCEL
+|--------------------------------------------------------------------------
+*/
+
+public function cancel(
+    string $reference
+): bool {
+
+    try {
+
+        $reference = strtoupper(
+            trim($reference)
+        );
+
+        if ($reference === '') {
+            return false;
+        }
+
+        $escrow =
+            $this->escrowModel->findByReference(
+                $reference
+            );
+
+        if (
+            !is_array($escrow)
+            ||
+            empty($escrow['id'])
+        ) {
+
+            Logger::write(
+                'escrow_service_error',
+                [
+                    'step'      => 'CANCEL_ESCROW_NOT_FOUND',
+                    'reference' => $reference
+                ]
+            );
+
+            return false;
+        }
+
+        $escrowId =
+            (int)$escrow['id'];
+
+        if (
+            !method_exists(
+                $this->escrowModel,
+                'cancel'
+            )
+        ) {
+
+            Logger::write(
+                'escrow_service_error',
+                [
+                    'step'      => 'CANCEL_METHOD_MISSING',
+                    'reference' => $reference,
+                    'escrow_id' => $escrowId
+                ]
+            );
+
+            return false;
+        }
+
+        return (bool)$this->escrowModel->cancel(
+            $escrowId
+        );
+
+    } catch (Throwable $e) {
+
+        Logger::write(
+            'escrow_service_error',
+            [
+                'step'      => 'CANCEL_EXCEPTION',
+                'reference' => $reference,
+                'message'   => $e->getMessage(),
+                'file'      => $e->getFile(),
+                'line'      => $e->getLine()
+            ]
+        );
+
+        return false;
+    }
+}
+
+
+    /*
+|--------------------------------------------------------------------------
+| REFUND
+|--------------------------------------------------------------------------
+*/
+
+public function refund(
+    string $reference
+): bool {
+
+    try {
+
+        $reference = strtoupper(
+            trim($reference)
+        );
+
+        if ($reference === '') {
+            return false;
+        }
+
+        $escrow =
+            $this->escrowModel->findByReference(
+                $reference
+            );
+
+        if (
+            !is_array($escrow)
+            ||
+            empty($escrow['id'])
+        ) {
+
+            Logger::write(
+                'escrow_service_error',
+                [
+                    'step'      => 'REFUND_ESCROW_NOT_FOUND',
+                    'reference' => $reference
+                ]
+            );
+
+            return false;
+        }
+
+        $escrowId =
+            (int)$escrow['id'];
+
+        if (
+            !method_exists(
+                $this->escrowModel,
+                'refund'
+            )
+        ) {
+
+            Logger::write(
+                'escrow_service_error',
+                [
+                    'step'      => 'REFUND_METHOD_MISSING',
+                    'reference' => $reference,
+                    'escrow_id' => $escrowId
+                ]
+            );
+
+            return false;
+        }
+
+        return (bool)$this->escrowModel->refund(
+            $escrowId
+        );
+
+    } catch (Throwable $e) {
+
+        Logger::write(
+            'escrow_service_error',
+            [
+                'step'      => 'REFUND_EXCEPTION',
+                'reference' => $reference,
+                'message'   => $e->getMessage(),
+                'file'      => $e->getFile(),
+                'line'      => $e->getLine()
+            ]
+        );
+
+        return false;
+    }
+}
+
+
+    /*
+|--------------------------------------------------------------------------
+| FIND
+|--------------------------------------------------------------------------
+*/
+
+public function find(
+    string $reference
+): ?array {
+
+    try {
+
+        $reference = strtoupper(
+            trim($reference)
+        );
+
+        if ($reference === '') {
             return null;
         }
+
+        return $this->escrowModel->findByReference(
+            $reference
+        );
+
+    } catch (Throwable $e) {
+
+        Logger::write(
+            'escrow_service_error',
+            [
+                'step'      => 'FIND_EXCEPTION',
+                'reference' => $reference,
+                'message'   => $e->getMessage(),
+                'file'      => $e->getFile(),
+                'line'      => $e->getLine()
+            ]
+        );
+
+        return null;
     }
+}
 
 
     /*
