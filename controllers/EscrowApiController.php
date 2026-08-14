@@ -6,12 +6,15 @@ namespace Controllers;
 
 use Core\Logger;
 use Services\Escrow\EscrowApiService;
-use Services\Payments\PaystackEscrowPaymentService;
+use Services\Escrow\PaystackEscrowPaymentService;
 use Throwable;
 
 class EscrowApiController
 {
     protected EscrowApiService $service;
+
+    protected PaystackEscrowPaymentService $paymentService;
+
 
     /**
      * ---------------------------------------------------------
@@ -20,7 +23,11 @@ class EscrowApiController
      */
     public function __construct()
     {
-        $this->service = new EscrowApiService();
+        $this->service =
+            new EscrowApiService();
+
+        $this->paymentService =
+            new PaystackEscrowPaymentService();
 
         Logger::write(
             'escrow_api_controller',
@@ -38,7 +45,7 @@ class EscrowApiController
      *
      * POST /api/escrow/verify
      *
-     * Expected:
+     * Request:
      *
      * {
      *     "reference": "SDM-000033"
@@ -53,42 +60,54 @@ class EscrowApiController
             Logger::write(
                 'escrow_api_controller',
                 [
-                    'step' => 'VERIFY_REQUEST',
+                    'step' =>
+                        'VERIFY_REQUEST',
+
                     'method' =>
-                        $_SERVER['REQUEST_METHOD'] ?? null,
+                        $_SERVER['REQUEST_METHOD']
+                        ?? null,
+
                     'uri' =>
-                        $_SERVER['REQUEST_URI'] ?? null,
+                        $_SERVER['REQUEST_URI']
+                        ?? null,
                 ]
             );
 
-            $input = $this->input();
+
+            $input =
+                $this->input();
+
+
+            $reference =
+                $this->normalizeReference(
+                    $input
+                );
+
 
             Logger::write(
                 'escrow_api_controller',
                 [
-                    'step' => 'VERIFY_INPUT',
-                    'input' => $input,
+                    'step' =>
+                        'VERIFY_INPUT',
+
+                    'reference' =>
+                        $reference,
                 ]
             );
 
-            $reference =
-                strtoupper(
-                    trim(
-                        (string)(
-                            $input['reference']
-                            ??
-                            $input['escrow_reference']
-                            ??
-                            ''
-                        )
-                    )
-                );
+
+            /*
+            |--------------------------------------------------------------------------
+            | Validate Reference
+            |--------------------------------------------------------------------------
+            */
 
             if ($reference === '') {
 
                 $this->json(
                     [
                         'success' => false,
+
                         'message' =>
                             'Escrow reference is required.',
                     ],
@@ -97,28 +116,47 @@ class EscrowApiController
 
                 return;
             }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Verify Escrow
+            |--------------------------------------------------------------------------
+            */
 
             $result =
                 $this->service->verify(
                     $reference
                 );
 
+
             Logger::write(
                 'escrow_api_controller',
                 [
                     'step' =>
                         'VERIFY_SERVICE_RESULT',
+
                     'reference' =>
                         $reference,
+
                     'result' =>
                         $result,
                 ]
             );
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Response Status
+            |--------------------------------------------------------------------------
+            */
 
             $status =
-                ($result['success'] ?? false)
-                ? 200
-                : 404;
+                $this->statusForResult(
+                    $result,
+                    404
+                );
+
 
             $this->json(
                 $result,
@@ -128,29 +166,10 @@ class EscrowApiController
         }
         catch (Throwable $e) {
 
-            Logger::write(
-                'escrow_api_controller_error',
-                [
-                    'step' =>
-                        'VERIFY_EXCEPTION',
-                    'message' =>
-                        $e->getMessage(),
-                    'file' =>
-                        $e->getFile(),
-                    'line' =>
-                        $e->getLine(),
-                    'trace' =>
-                        $e->getTraceAsString(),
-                ]
-            );
-
-            $this->json(
-                [
-                    'success' => false,
-                    'message' =>
-                        'Unable to verify escrow.',
-                ],
-                500
+            $this->handleException(
+                'VERIFY_EXCEPTION',
+                $e,
+                'Unable to verify escrow.'
             );
         }
     }
@@ -158,245 +177,21 @@ class EscrowApiController
 
     /**
      * ---------------------------------------------------------
-     * RELEASE / CONFIRM RECEIPT
-     * ---------------------------------------------------------
-     *
-     * POST /api/escrow/release
-     *
-     * Expected:
-     *
-     * {
-     *     "reference": "SDM-000033",
-     *     "phone": "08012345678"
-     * }
-     *
-     * IMPORTANT:
-     *
-     * This does not directly pay the seller.
-     *
-     * It confirms that the buyer has received the item.
-     *
-     * The existing EscrowConfirmationService handles
-     * the actual confirmation workflow.
-     *
-     * ---------------------------------------------------------
-     */
-    public function release(): void
-    {
-        try {
-
-            Logger::write(
-                'escrow_api_controller',
-                [
-                    'step' => 'RELEASE_REQUEST',
-                    'method' =>
-                        $_SERVER['REQUEST_METHOD'] ?? null,
-                    'uri' =>
-                        $_SERVER['REQUEST_URI'] ?? null,
-                ]
-            );
-
-            $input = $this->input();
-
-            Logger::write(
-                'escrow_api_controller',
-                [
-                    'step' => 'RELEASE_INPUT',
-                    'input' => $input,
-                ]
-            );
-
-            $reference =
-                strtoupper(
-                    trim(
-                        (string)(
-                            $input['reference']
-                            ??
-                            $input['escrow_reference']
-                            ??
-                            ''
-                        )
-                    )
-                );
-
-            $phone =
-                trim(
-                    (string)(
-                        $input['phone']
-                        ??
-                        $input['buyer_phone']
-                        ??
-                        ''
-                    )
-                );
-
-            if ($reference === '') {
-
-                $this->json(
-                    [
-                        'success' => false,
-                        'message' =>
-                            'Escrow reference is required.',
-                    ],
-                    422
-                );
-
-                return;
-            }
-
-            if ($phone === '') {
-
-                $this->json(
-                    [
-                        'success' => false,
-                        'message' =>
-                            'Buyer phone number is required.',
-                    ],
-                    422
-                );
-
-                return;
-            }
-
-            $result =
-                $this->service->confirmReceipt(
-                    $reference,
-                    $phone
-                );
-
-            Logger::write(
-                'escrow_api_controller',
-                [
-                    'step' =>
-                        'RELEASE_SERVICE_RESULT',
-                    'reference' =>
-                        $reference,
-                    'result' =>
-                        $result,
-                ]
-            );
-
-            if (
-                ($result['success'] ?? false)
-            ) {
-
-                $status = 200;
-
-            }
-            else {
-
-                $message =
-                    strtolower(
-                        trim(
-                            (string)(
-                                $result['message']
-                                ?? ''
-                            )
-                        )
-                    );
-
-                if (
-                    str_contains(
-                        $message,
-                        'not authorized'
-                    )
-                    ||
-                    str_contains(
-                        $message,
-                        'not registered'
-                    )
-                    ||
-                    str_contains(
-                        $message,
-                        'unauthorized'
-                    )
-                ) {
-
-                    $status = 403;
-
-                }
-                elseif (
-                    str_contains(
-                        $message,
-                        'not found'
-                    )
-                ) {
-
-                    $status = 404;
-
-                }
-                elseif (
-                    str_contains(
-                        $message,
-                        'required'
-                    )
-                ) {
-
-                    $status = 422;
-
-                }
-                else {
-
-                    $status = 400;
-                }
-            }
-
-            $this->json(
-                $result,
-                $status
-            );
-
-        }
-        catch (Throwable $e) {
-
-            Logger::write(
-                'escrow_api_controller_error',
-                [
-                    'step' =>
-                        'RELEASE_EXCEPTION',
-                    'message' =>
-                        $e->getMessage(),
-                    'file' =>
-                        $e->getFile(),
-                    'line' =>
-                        $e->getLine(),
-                    'trace' =>
-                        $e->getTraceAsString(),
-                ]
-            );
-
-            $this->json(
-                [
-                    'success' => false,
-                    'message' =>
-                        'Unable to release escrow.',
-                ],
-                500
-            );
-        }
-    }
-
-
-    /**
-     * ---------------------------------------------------------
-     * PAYMENT INITIALIZATION
+     * PAY ESCROW
      * ---------------------------------------------------------
      *
      * POST /api/escrow/payment
      *
-     * Expected:
+     * Request:
      *
      * {
      *     "reference": "SDM-000033",
      *     "email": "buyer@example.com"
      * }
      *
-     * IMPORTANT:
+     * The client NEVER supplies the payment amount.
      *
-     * The client does NOT supply the amount.
-     *
-     * PaystackEscrowPaymentService loads the authoritative
-     * amount from the escrow record.
+     * The amount is loaded from the authoritative escrow record.
      *
      * ---------------------------------------------------------
      */
@@ -407,61 +202,63 @@ class EscrowApiController
             Logger::write(
                 'escrow_api_controller',
                 [
-                    'step' => 'PAYMENT_REQUEST',
+                    'step' =>
+                        'PAYMENT_REQUEST',
+
                     'method' =>
-                        $_SERVER['REQUEST_METHOD'] ?? null,
+                        $_SERVER['REQUEST_METHOD']
+                        ?? null,
+
                     'uri' =>
-                        $_SERVER['REQUEST_URI'] ?? null,
+                        $_SERVER['REQUEST_URI']
+                        ?? null,
                 ]
             );
 
-            $input = $this->input();
+
+            $input =
+                $this->input();
+
+
+            $reference =
+                $this->normalizeReference(
+                    $input
+                );
+
+
+            $email =
+                $this->normalizeEmail(
+                    $input
+                );
+
 
             Logger::write(
                 'escrow_api_controller',
                 [
-                    'step' => 'PAYMENT_INPUT',
-                    'input' => $input,
+                    'step' =>
+                        'PAYMENT_INPUT',
+
+                    'reference' =>
+                        $reference,
+
+                    'email' =>
+                        $email,
                 ]
             );
 
-            $reference =
-                strtoupper(
-                    trim(
-                        (string)(
-                            $input['reference']
-                            ??
-                            $input['escrow_reference']
-                            ??
-                            ''
-                        )
-                    )
-                );
 
-            $email =
-                trim(
-                    (string)(
-                        $input['email']
-                        ??
-                        $input['buyer_email']
-                        ??
-                        ''
-                    )
-                );
+            /*
+            |--------------------------------------------------------------------------
+            | Validate Reference
+            |--------------------------------------------------------------------------
+            */
 
             if ($reference === '') {
-
-                Logger::write(
-                    'escrow_api_controller_error',
-                    [
-                        'step' =>
-                            'PAYMENT_REFERENCE_MISSING',
-                    ]
-                );
 
                 $this->json(
                     [
                         'success' => false,
+
                         'message' =>
                             'Escrow reference is required.',
                     ],
@@ -470,6 +267,13 @@ class EscrowApiController
 
                 return;
             }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Validate Email
+            |--------------------------------------------------------------------------
+            */
 
             if (
                 $email === ''
@@ -485,14 +289,17 @@ class EscrowApiController
                     [
                         'step' =>
                             'PAYMENT_EMAIL_INVALID',
+
                         'reference' =>
                             $reference,
                     ]
                 );
 
+
                 $this->json(
                     [
                         'success' => false,
+
                         'message' =>
                             'A valid email address is required.',
                     ],
@@ -502,59 +309,88 @@ class EscrowApiController
                 return;
             }
 
-            $callbackUrl =
-                trim(
-                    (string)(
-                        $input['callback_url']
-                        ?? ''
-                    )
-                );
 
-            if ($callbackUrl === '') {
-                $callbackUrl = null;
-            }
+            /*
+            |--------------------------------------------------------------------------
+            | Callback URL
+            |--------------------------------------------------------------------------
+            |
+            | The API client does not control the internal Paystack
+            | callback URL.
+            |
+            | PaystackEscrowPaymentService will use the configured
+            | escrow callback when no callback is explicitly supplied.
+            |
+            | We therefore deliberately do not trust arbitrary callback
+            | URLs from the API request.
+            |--------------------------------------------------------------------------
+            */
 
             Logger::write(
                 'escrow_api_controller',
                 [
                     'step' =>
                         'PAYMENT_INITIALIZATION_START',
+
                     'reference' =>
                         $reference,
+
                     'email' =>
                         $email,
-                    'callback_url' =>
-                        $callbackUrl,
                 ]
             );
 
-            $paymentService =
-                new PaystackEscrowPaymentService();
+
+            /*
+            |--------------------------------------------------------------------------
+            | Initialize Payment
+            |--------------------------------------------------------------------------
+            */
 
             $result =
-                $paymentService->initialize(
+                $this->paymentService->initialize(
                     $reference,
                     $email,
-                    $callbackUrl
+                    null
                 );
+
 
             Logger::write(
                 'escrow_api_controller',
                 [
                     'step' =>
                         'PAYMENT_INITIALIZATION_RESULT',
+
                     'reference' =>
                         $reference,
-                    'result' =>
-                        $result,
+
+                    'success' =>
+                        $result['success']
+                        ?? false,
+
+                    'payment_reference' =>
+                        $result['payment_reference']
+                        ?? null,
+
+                    'message' =>
+                        $result['message']
+                        ?? null,
                 ]
             );
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Normalize Invalid Service Response
+            |--------------------------------------------------------------------------
+            */
 
             if (!is_array($result)) {
 
                 $this->json(
                     [
                         'success' => false,
+
                         'message' =>
                             'Unable to initialize escrow payment.',
                     ],
@@ -564,8 +400,15 @@ class EscrowApiController
                 return;
             }
 
+
+            /*
+            |--------------------------------------------------------------------------
+            | Successful Initialization
+            |--------------------------------------------------------------------------
+            */
+
             if (
-                ($result['success'] ?? false)
+                ($result['success'] ?? false) === true
             ) {
 
                 $this->json(
@@ -576,65 +419,19 @@ class EscrowApiController
                 return;
             }
 
-            $message =
-                strtolower(
-                    trim(
-                        (string)(
-                            $result['message']
-                            ?? ''
-                        )
-                    )
+
+            /*
+            |--------------------------------------------------------------------------
+            | Failed Initialization
+            |--------------------------------------------------------------------------
+            */
+
+            $status =
+                $this->statusForResult(
+                    $result,
+                    400
                 );
 
-            if (
-                str_contains(
-                    $message,
-                    'required'
-                )
-            ) {
-
-                $status = 422;
-
-            }
-            elseif (
-                str_contains(
-                    $message,
-                    'not found'
-                )
-            ) {
-
-                $status = 404;
-
-            }
-            elseif (
-                str_contains(
-                    $message,
-                    'not authorized'
-                )
-                ||
-                str_contains(
-                    $message,
-                    'unauthorized'
-                )
-            ) {
-
-                $status = 403;
-
-            }
-            elseif (
-                str_contains(
-                    $message,
-                    'already'
-                )
-            ) {
-
-                $status = 409;
-
-            }
-            else {
-
-                $status = 400;
-            }
 
             $this->json(
                 $result,
@@ -644,29 +441,189 @@ class EscrowApiController
         }
         catch (Throwable $e) {
 
+            $this->handleException(
+                'PAYMENT_EXCEPTION',
+                $e,
+                'Unable to initialize escrow payment.'
+            );
+        }
+    }
+
+
+    /**
+     * ---------------------------------------------------------
+     * RELEASE / CONFIRM RECEIPT
+     * ---------------------------------------------------------
+     *
+     * POST /api/escrow/release
+     *
+     * Request:
+     *
+     * {
+     *     "reference": "SDM-000033",
+     *     "phone": "08012345678"
+     * }
+     *
+     * IMPORTANT:
+     *
+     * This endpoint does not blindly release money.
+     *
+     * It confirms buyer receipt through the existing
+     * EscrowConfirmationService workflow.
+     *
+     * ---------------------------------------------------------
+     */
+    public function release(): void
+    {
+        try {
+
             Logger::write(
-                'escrow_api_controller_error',
+                'escrow_api_controller',
                 [
                     'step' =>
-                        'PAYMENT_EXCEPTION',
-                    'message' =>
-                        $e->getMessage(),
-                    'file' =>
-                        $e->getFile(),
-                    'line' =>
-                        $e->getLine(),
-                    'trace' =>
-                        $e->getTraceAsString(),
+                        'RELEASE_REQUEST',
+
+                    'method' =>
+                        $_SERVER['REQUEST_METHOD']
+                        ?? null,
+
+                    'uri' =>
+                        $_SERVER['REQUEST_URI']
+                        ?? null,
                 ]
             );
 
-            $this->json(
+
+            $input =
+                $this->input();
+
+
+            $reference =
+                $this->normalizeReference(
+                    $input
+                );
+
+
+            $phone =
+                trim(
+                    (string)(
+                        $input['phone']
+                        ??
+                        $input['phone_number']
+                        ??
+                        $input['buyer_phone']
+                        ??
+                        ''
+                    )
+                );
+
+
+            Logger::write(
+                'escrow_api_controller',
                 [
-                    'success' => false,
-                    'message' =>
-                        'Unable to initialize escrow payment.',
-                ],
-                500
+                    'step' =>
+                        'RELEASE_INPUT',
+
+                    'reference' =>
+                        $reference,
+
+                    'phone' =>
+                        $phone,
+                ]
+            );
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Validate Reference
+            |--------------------------------------------------------------------------
+            */
+
+            if ($reference === '') {
+
+                $this->json(
+                    [
+                        'success' => false,
+
+                        'message' =>
+                            'Escrow reference is required.',
+                    ],
+                    422
+                );
+
+                return;
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Validate Phone
+            |--------------------------------------------------------------------------
+            */
+
+            if ($phone === '') {
+
+                $this->json(
+                    [
+                        'success' => false,
+
+                        'message' =>
+                            'Buyer phone number is required.',
+                    ],
+                    422
+                );
+
+                return;
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Confirm Receipt
+            |--------------------------------------------------------------------------
+            */
+
+            $result =
+                $this->service->confirmReceipt(
+                    $reference,
+                    $phone
+                );
+
+
+            Logger::write(
+                'escrow_api_controller',
+                [
+                    'step' =>
+                        'RELEASE_SERVICE_RESULT',
+
+                    'reference' =>
+                        $reference,
+
+                    'result' =>
+                        $result,
+                ]
+            );
+
+
+            $status =
+                $this->statusForResult(
+                    $result,
+                    400
+                );
+
+
+            $this->json(
+                $result,
+                $status
+            );
+
+        }
+        catch (Throwable $e) {
+
+            $this->handleException(
+                'RELEASE_EXCEPTION',
+                $e,
+                'Unable to release escrow.'
             );
         }
     }
@@ -677,13 +634,17 @@ class EscrowApiController
      * PAYMENT STATUS
      * ---------------------------------------------------------
      *
-     * GET /api/escrow/payment/status?reference=SDM-000033
-     *
-     * OR
+     * GET /api/escrow/payment/status
      *
      * POST /api/escrow/payment/status
      *
-     * Expected:
+     * Examples:
+     *
+     * GET:
+     *
+     * /api/escrow/payment/status?reference=SDM-000033
+     *
+     * POST:
      *
      * {
      *     "reference": "SDM-000033"
@@ -691,13 +652,13 @@ class EscrowApiController
      *
      * ---------------------------------------------------------
      *
-     * Returns the current payment state of the escrow.
+     * This endpoint reads the escrow database.
      *
-     * This endpoint does NOT call Paystack.
+     * It does NOT call Paystack.
      *
-     * The escrow database is the source of truth here because
-     * the Paystack webhook is responsible for recording the
-     * successful payment against the escrow.
+     * The webhook is responsible for changing:
+     *
+     * pending -> paid
      *
      * ---------------------------------------------------------
      */
@@ -708,31 +669,28 @@ class EscrowApiController
             Logger::write(
                 'escrow_api_controller',
                 [
-                    'step' => 'PAYMENT_STATUS_REQUEST',
+                    'step' =>
+                        'PAYMENT_STATUS_REQUEST',
+
                     'method' =>
-                        $_SERVER['REQUEST_METHOD'] ?? null,
+                        $_SERVER['REQUEST_METHOD']
+                        ?? null,
+
                     'uri' =>
-                        $_SERVER['REQUEST_URI'] ?? null,
+                        $_SERVER['REQUEST_URI']
+                        ?? null,
                 ]
             );
 
-            /*
-            |--------------------------------------------------------------------------
-            | Read Input
-            |--------------------------------------------------------------------------
-            */
 
-            $input = $this->input();
+            $input =
+                $this->input();
+
 
             /*
             |--------------------------------------------------------------------------
-            | GET fallback
+            | GET Query Parameters
             |--------------------------------------------------------------------------
-            |
-            | Because payment/status supports GET as well as POST,
-            | read the reference from $_GET when it wasn't found
-            | in JSON/POST input.
-            |
             */
 
             if (
@@ -742,7 +700,9 @@ class EscrowApiController
             ) {
 
                 if (
-                    isset($_GET['reference'])
+                    isset(
+                        $_GET['reference']
+                    )
                 ) {
 
                     $input['reference'] =
@@ -750,7 +710,9 @@ class EscrowApiController
 
                 }
                 elseif (
-                    isset($_GET['escrow_reference'])
+                    isset(
+                        $_GET['escrow_reference']
+                    )
                 ) {
 
                     $input['escrow_reference'] =
@@ -758,34 +720,24 @@ class EscrowApiController
                 }
             }
 
+
+            $reference =
+                $this->normalizeReference(
+                    $input
+                );
+
+
             Logger::write(
                 'escrow_api_controller',
                 [
                     'step' =>
                         'PAYMENT_STATUS_INPUT',
-                    'input' =>
-                        $input,
+
+                    'reference' =>
+                        $reference,
                 ]
             );
 
-            /*
-            |--------------------------------------------------------------------------
-            | Reference
-            |--------------------------------------------------------------------------
-            */
-
-            $reference =
-                strtoupper(
-                    trim(
-                        (string)(
-                            $input['reference']
-                            ??
-                            $input['escrow_reference']
-                            ??
-                            ''
-                        )
-                    )
-                );
 
             /*
             |--------------------------------------------------------------------------
@@ -795,17 +747,10 @@ class EscrowApiController
 
             if ($reference === '') {
 
-                Logger::write(
-                    'escrow_api_controller_error',
-                    [
-                        'step' =>
-                            'PAYMENT_STATUS_REFERENCE_MISSING',
-                    ]
-                );
-
                 $this->json(
                     [
                         'success' => false,
+
                         'message' =>
                             'Escrow reference is required.',
                     ],
@@ -815,9 +760,15 @@ class EscrowApiController
                 return;
             }
 
+
             /*
             |--------------------------------------------------------------------------
-            | Lookup Escrow
+            | Get Escrow
+            |--------------------------------------------------------------------------
+            |
+            | The service owns escrow lookup.
+            |
+            | No direct model fallback is used here.
             |--------------------------------------------------------------------------
             */
 
@@ -827,70 +778,32 @@ class EscrowApiController
                         $reference
                     );
 
-            /*
-            |--------------------------------------------------------------------------
-            | Fallback
-            |--------------------------------------------------------------------------
-            |
-            | If the service does not expose a lookup method,
-            | we use a fresh Escrow model directly.
-            |
-            | This keeps the API endpoint independent from
-            | payment-processing logic.
-            |
-            */
 
-            if ($escrow === null) {
-
-                Logger::write(
-                    'escrow_api_controller',
-                    [
-                        'step' =>
-                            'PAYMENT_STATUS_SERVICE_LOOKUP_EMPTY',
-                        'reference' =>
-                            $reference,
-                    ]
-                );
-
-                /*
-                |--------------------------------------------------------------------------
-                | Direct model lookup
-                |--------------------------------------------------------------------------
-                */
-
-                $escrowModel =
-                    new \Modules\Escrow\Models\Escrow();
-
-                $escrow =
-                    $escrowModel
-                        ->findByReference(
-                            $reference
-                        );
-            }
-
-            /*
-            |--------------------------------------------------------------------------
-            | Escrow Not Found
-            |--------------------------------------------------------------------------
-            */
-
-            if (!$escrow) {
+            if (
+                !is_array($escrow)
+                ||
+                $escrow === []
+            ) {
 
                 Logger::write(
                     'escrow_api_controller',
                     [
                         'step' =>
                             'PAYMENT_STATUS_ESCROW_NOT_FOUND',
+
                         'reference' =>
                             $reference,
                     ]
                 );
 
+
                 $this->json(
                     [
                         'success' => false,
+
                         'message' =>
                             'Escrow transaction not found.',
+
                         'reference' =>
                             $reference,
                     ],
@@ -900,9 +813,10 @@ class EscrowApiController
                 return;
             }
 
+
             /*
             |--------------------------------------------------------------------------
-            | Extract Payment Information
+            | Normalize Escrow Status
             |--------------------------------------------------------------------------
             */
 
@@ -916,6 +830,13 @@ class EscrowApiController
                     )
                 );
 
+
+            /*
+            |--------------------------------------------------------------------------
+            | Payment Reference
+            |--------------------------------------------------------------------------
+            */
+
             $paymentReference =
                 trim(
                     (string)(
@@ -924,13 +845,29 @@ class EscrowApiController
                     )
                 );
 
+
+            /*
+            |--------------------------------------------------------------------------
+            | Payment Method
+            |--------------------------------------------------------------------------
+            */
+
             $paymentMethod =
-                trim(
-                    (string)(
-                        $escrow['payment_method']
-                        ?? 'paystack'
+                strtoupper(
+                    trim(
+                        (string)(
+                            $escrow['payment_method']
+                            ?? 'paystack'
+                        )
                     )
                 );
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Currency
+            |--------------------------------------------------------------------------
+            */
 
             $currency =
                 strtoupper(
@@ -942,45 +879,26 @@ class EscrowApiController
                     )
                 );
 
+
             /*
             |--------------------------------------------------------------------------
             | Amount
             |--------------------------------------------------------------------------
             |
-            | For payment status we expose the authoritative escrow
-            | amount. Prefer total_amount because that is the amount
-            | charged to the buyer when the payment service includes
-            | fees.
-            |
+            | total_amount is the authoritative buyer-facing amount
+            | when it exists.
+            |--------------------------------------------------------------------------
             */
 
-            $amount = null;
-
-            if (
-                array_key_exists(
-                    'total_amount',
+            $amount =
+                $this->extractPublicAmount(
                     $escrow
-                )
-            ) {
+                );
 
-                $amount =
-                    (float)$escrow['total_amount'];
-
-            }
-            elseif (
-                array_key_exists(
-                    'amount',
-                    $escrow
-                )
-            ) {
-
-                $amount =
-                    (float)$escrow['amount'];
-            }
 
             /*
             |--------------------------------------------------------------------------
-            | Determine Paid State
+            | Paid Status
             |--------------------------------------------------------------------------
             */
 
@@ -988,8 +906,10 @@ class EscrowApiController
                 'paid',
                 'item_sent',
                 'awaiting_payout',
+                'buyer_confirmed',
                 'completed',
             ];
+
 
             $paymentCompleted =
                 in_array(
@@ -1000,24 +920,18 @@ class EscrowApiController
                 &&
                 $paymentReference !== '';
 
+
             /*
             |--------------------------------------------------------------------------
-            | Safe Public Response
+            | Public Response
             |--------------------------------------------------------------------------
             |
-            | NEVER expose:
-            |
-            | - buyer_id
-            | - seller_id
-            | - database ID
-            | - phone numbers
-            | - email addresses
-            | - release codes
-            | - payout details
-            |
+            | Do not expose internal IDs or sensitive account information.
+            |--------------------------------------------------------------------------
             */
 
             $response = [
+
                 'success' =>
                     true,
 
@@ -1045,21 +959,27 @@ class EscrowApiController
                     $currency,
             ];
 
+
             Logger::write(
                 'escrow_api_controller',
                 [
                     'step' =>
                         'PAYMENT_STATUS_COMPLETE',
+
                     'reference' =>
                         $reference,
+
                     'status' =>
                         $status,
+
                     'payment_completed' =>
                         $paymentCompleted,
+
                     'has_payment_reference' =>
                         $paymentReference !== '',
                 ]
             );
+
 
             $this->json(
                 $response,
@@ -1069,29 +989,10 @@ class EscrowApiController
         }
         catch (Throwable $e) {
 
-            Logger::write(
-                'escrow_api_controller_error',
-                [
-                    'step' =>
-                        'PAYMENT_STATUS_EXCEPTION',
-                    'message' =>
-                        $e->getMessage(),
-                    'file' =>
-                        $e->getFile(),
-                    'line' =>
-                        $e->getLine(),
-                    'trace' =>
-                        $e->getTraceAsString(),
-                ]
-            );
-
-            $this->json(
-                [
-                    'success' => false,
-                    'message' =>
-                        'Unable to retrieve escrow payment status.',
-                ],
-                500
+            $this->handleException(
+                'PAYMENT_STATUS_EXCEPTION',
+                $e,
+                'Unable to retrieve escrow payment status.'
             );
         }
     }
@@ -1099,14 +1000,195 @@ class EscrowApiController
 
     /**
      * ---------------------------------------------------------
-     * READ INPUT
+     * NORMALIZE REFERENCE
+     * ---------------------------------------------------------
+     */
+    protected function normalizeReference(
+        array $input
+    ): string {
+
+        return strtoupper(
+            trim(
+                (string)(
+                    $input['reference']
+                    ??
+                    $input['escrow_reference']
+                    ??
+                    ''
+                )
+            )
+        );
+    }
+
+
+    /**
+     * ---------------------------------------------------------
+     * NORMALIZE EMAIL
+     * ---------------------------------------------------------
+     */
+    protected function normalizeEmail(
+        array $input
+    ): string {
+
+        return trim(
+            (string)(
+                $input['email']
+                ??
+                $input['buyer_email']
+                ??
+                ''
+            )
+        );
+    }
+
+
+    /**
+     * ---------------------------------------------------------
+     * EXTRACT PUBLIC AMOUNT
+     * ---------------------------------------------------------
+     */
+    protected function extractPublicAmount(
+        array $escrow
+    ): ?float {
+
+        if (
+            array_key_exists(
+                'total_amount',
+                $escrow
+            )
+            &&
+            is_numeric(
+                $escrow['total_amount']
+            )
+        ) {
+
+            return (float)$escrow['total_amount'];
+        }
+
+
+        if (
+            array_key_exists(
+                'amount',
+                $escrow
+            )
+            &&
+            is_numeric(
+                $escrow['amount']
+            )
+        ) {
+
+            return (float)$escrow['amount'];
+        }
+
+
+        return null;
+    }
+
+
+    /**
+     * ---------------------------------------------------------
+     * DETERMINE HTTP STATUS FROM SERVICE RESULT
+     * ---------------------------------------------------------
+     */
+    protected function statusForResult(
+        array $result,
+        int $defaultStatus = 400
+    ): int {
+
+        if (
+            ($result['success'] ?? false)
+            ===
+            true
+        ) {
+
+            return 200;
+        }
+
+
+        $message =
+            strtolower(
+                trim(
+                    (string)(
+                        $result['message']
+                        ?? ''
+                    )
+                )
+            );
+
+
+        if (
+            str_contains(
+                $message,
+                'required'
+            )
+            ||
+            str_contains(
+                $message,
+                'invalid'
+            )
+        ) {
+
+            return 422;
+        }
+
+
+        if (
+            str_contains(
+                $message,
+                'not found'
+            )
+        ) {
+
+            return 404;
+        }
+
+
+        if (
+            str_contains(
+                $message,
+                'not authorized'
+            )
+            ||
+            str_contains(
+                $message,
+                'unauthorized'
+            )
+            ||
+            str_contains(
+                $message,
+                'not allowed'
+            )
+        ) {
+
+            return 403;
+        }
+
+
+        if (
+            str_contains(
+                $message,
+                'already'
+            )
+        ) {
+
+            return 409;
+        }
+
+
+        return $defaultStatus;
+    }
+
+
+    /**
+     * ---------------------------------------------------------
+     * READ REQUEST INPUT
      * ---------------------------------------------------------
      *
      * Supports:
      *
-     * - JSON
-     * - application/x-www-form-urlencoded
-     * - multipart/form-data
+     * JSON
+     * application/x-www-form-urlencoded
+     * multipart/form-data
      *
      * ---------------------------------------------------------
      */
@@ -1118,6 +1200,7 @@ class EscrowApiController
                 file_get_contents(
                     'php://input'
                 );
+
 
             if (
                 is_string($raw)
@@ -1131,6 +1214,7 @@ class EscrowApiController
                         true
                     );
 
+
                 if (
                     is_array($decoded)
                 ) {
@@ -1139,12 +1223,14 @@ class EscrowApiController
                 }
             }
 
+
             if (
                 !empty($_POST)
             ) {
 
                 return $_POST;
             }
+
 
             return [];
 
@@ -1156,17 +1242,65 @@ class EscrowApiController
                 [
                     'step' =>
                         'INPUT_READ_EXCEPTION',
+
                     'message' =>
                         $e->getMessage(),
+
                     'file' =>
                         $e->getFile(),
+
                     'line' =>
                         $e->getLine(),
                 ]
             );
 
+
             return [];
         }
+    }
+
+
+    /**
+     * ---------------------------------------------------------
+     * HANDLE EXCEPTION
+     * ---------------------------------------------------------
+     */
+    protected function handleException(
+        string $step,
+        Throwable $e,
+        string $message
+    ): void {
+
+        Logger::write(
+            'escrow_api_controller_error',
+            [
+                'step' =>
+                    $step,
+
+                'message' =>
+                    $e->getMessage(),
+
+                'file' =>
+                    $e->getFile(),
+
+                'line' =>
+                    $e->getLine(),
+
+                'trace' =>
+                    $e->getTraceAsString(),
+            ]
+        );
+
+
+        $this->json(
+            [
+                'success' => false,
+
+                'message' =>
+                    $message,
+            ],
+            500
+        );
     }
 
 
@@ -1184,9 +1318,11 @@ class EscrowApiController
             $status
         );
 
+
         header(
             'Content-Type: application/json; charset=utf-8'
         );
+
 
         echo json_encode(
             $data,

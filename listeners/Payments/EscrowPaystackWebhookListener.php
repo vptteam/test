@@ -16,44 +16,35 @@ class EscrowPaystackWebhookListener
      * Handle Paystack Escrow Webhook
      * ---------------------------------------------------------
      *
-     * Flow:
+     * Canonical flow:
      *
      * Paystack
-     *     ↓
-     * Read raw request
-     *     ↓
-     * Validate signature
-     *     ↓
-     * Decode JSON
-     *     ↓
-     * Accept charge.success only
-     *     ↓
+     *      ↓
+     * POST
+     *      ↓
+     * Signature validation
+     *      ↓
+     * Decode event
+     *      ↓
+     * charge.success
+     *      ↓
      * Extract Paystack reference
-     *     ↓
-     * Verify transaction directly with Paystack
-     *     ↓
-     * Validate verified escrow metadata
-     *     ↓
+     *      ↓
+     * PaystackGateway::verify()
+     *      ↓
      * PaystackEscrowPaymentService::process()
-     *     ↓
-     * Escrow marked paid
-     *     ↓
-     * Notifications handled by service
-     *
-     * ---------------------------------------------------------
-     *
-     * IMPORTANT
+     *      ↓
+     * Escrow model
      *
      * This listener does NOT:
      *
-     * - initialize payments
-     * - mark escrow paid directly
+     * - initialize payment
      * - calculate fees
-     * - send buyer messages
-     * - send seller messages
-     * - perform escrow business logic
+     * - mark escrow paid
+     * - send notifications
+     * - modify escrow directly
      *
-     * Those responsibilities belong to their respective services.
+     * Those responsibilities belong to the services/models.
      *
      * ---------------------------------------------------------
      */
@@ -69,30 +60,35 @@ class EscrowPaystackWebhookListener
             |--------------------------------------------------------------------------
             */
 
-            $method = strtoupper(
-                trim(
-                    (string)(
-                        $_SERVER['REQUEST_METHOD']
-                        ?? ''
+            $method =
+                strtoupper(
+                    trim(
+                        (string)(
+                            $_SERVER['REQUEST_METHOD']
+                            ?? ''
+                        )
                     )
-                )
-            );
+                );
 
-            $uri = (string)(
-                $_SERVER['REQUEST_URI']
-                ?? ''
-            );
+            $uri =
+                (string)(
+                    $_SERVER['REQUEST_URI']
+                    ?? ''
+                );
 
             Logger::write(
                 'paystack_escrow_webhook',
                 [
-                    'step'   => 'REQUEST_RECEIVED',
-                    'method' => $method,
-                    'uri'    => $uri,
-                    'time'   => date('Y-m-d H:i:s')
+                    'step' =>
+                        'REQUEST_RECEIVED',
+
+                    'method' =>
+                        $method,
+
+                    'uri' =>
+                        $uri,
                 ]
             );
-
 
             /*
             |--------------------------------------------------------------------------
@@ -100,21 +96,17 @@ class EscrowPaystackWebhookListener
             |--------------------------------------------------------------------------
             */
 
-            if ($method !== 'POST') {
-
-                Logger::write(
-                    'paystack_escrow_webhook_error',
-                    [
-                        'step'   => 'INVALID_METHOD',
-                        'method' => $method,
-                        'uri'    => $uri
-                    ]
-                );
+            if (
+                $method !== 'POST'
+            ) {
 
                 $this->json(
                     [
-                        'success' => false,
-                        'message' => 'Method not allowed.'
+                        'success' =>
+                            false,
+
+                        'message' =>
+                            'Method not allowed.',
                     ],
                     405
                 );
@@ -122,16 +114,16 @@ class EscrowPaystackWebhookListener
                 return;
             }
 
-
             /*
             |--------------------------------------------------------------------------
-            | Raw Payload
+            | Read Raw Payload
             |--------------------------------------------------------------------------
             */
 
-            $rawPayload = file_get_contents(
-                'php://input'
-            );
+            $rawPayload =
+                file_get_contents(
+                    'php://input'
+                );
 
             if (
                 !is_string($rawPayload)
@@ -142,14 +134,18 @@ class EscrowPaystackWebhookListener
                 Logger::write(
                     'paystack_escrow_webhook_error',
                     [
-                        'step' => 'EMPTY_PAYLOAD'
+                        'step' =>
+                            'EMPTY_PAYLOAD',
                     ]
                 );
 
                 $this->json(
                     [
-                        'success' => false,
-                        'message' => 'Empty webhook payload.'
+                        'success' =>
+                            false,
+
+                        'message' =>
+                            'Empty webhook payload.',
                     ],
                     400
                 );
@@ -157,10 +153,9 @@ class EscrowPaystackWebhookListener
                 return;
             }
 
-
             /*
             |--------------------------------------------------------------------------
-            | Signature
+            | Validate Signature
             |--------------------------------------------------------------------------
             */
 
@@ -173,14 +168,18 @@ class EscrowPaystackWebhookListener
                 Logger::write(
                     'paystack_escrow_webhook_error',
                     [
-                        'step' => 'INVALID_SIGNATURE'
+                        'step' =>
+                            'INVALID_SIGNATURE',
                     ]
                 );
 
                 $this->json(
                     [
-                        'success' => false,
-                        'message' => 'Invalid webhook signature.'
+                        'success' =>
+                            false,
+
+                        'message' =>
+                            'Invalid webhook signature.',
                     ],
                     401
                 );
@@ -188,25 +187,17 @@ class EscrowPaystackWebhookListener
                 return;
             }
 
-
-            Logger::write(
-                'paystack_escrow_webhook',
-                [
-                    'step' => 'SIGNATURE_VALID'
-                ]
-            );
-
-
             /*
             |--------------------------------------------------------------------------
             | Decode JSON
             |--------------------------------------------------------------------------
             */
 
-            $payload = json_decode(
-                $rawPayload,
-                true
-            );
+            $payload =
+                json_decode(
+                    $rawPayload,
+                    true
+                );
 
             if (
                 !is_array($payload)
@@ -215,22 +206,27 @@ class EscrowPaystackWebhookListener
                 Logger::write(
                     'paystack_escrow_webhook_error',
                     [
-                        'step'       => 'INVALID_JSON',
-                        'json_error' => json_last_error_msg()
+                        'step' =>
+                            'INVALID_JSON',
+
+                        'json_error' =>
+                            json_last_error_msg(),
                     ]
                 );
 
                 $this->json(
                     [
-                        'success' => false,
-                        'message' => 'Invalid webhook payload.'
+                        'success' =>
+                            false,
+
+                        'message' =>
+                            'Invalid webhook payload.',
                     ],
                     400
                 );
 
                 return;
             }
-
 
             /*
             |--------------------------------------------------------------------------
@@ -238,49 +234,50 @@ class EscrowPaystackWebhookListener
             |--------------------------------------------------------------------------
             */
 
-            $event = strtolower(
-                trim(
-                    (string)(
-                        $payload['event']
-                        ?? ''
+            $event =
+                strtolower(
+                    trim(
+                        (string)(
+                            $payload['event']
+                            ?? ''
+                        )
                     )
-                )
-            );
-
+                );
 
             Logger::write(
                 'paystack_escrow_webhook',
                 [
-                    'step'  => 'EVENT_RECEIVED',
-                    'event' => $event
+                    'step' =>
+                        'EVENT_RECEIVED',
+
+                    'event' =>
+                        $event,
                 ]
             );
 
-
             /*
             |--------------------------------------------------------------------------
-            | Only charge.success
+            | Ignore Non-Escrow-Relevant Events
             |--------------------------------------------------------------------------
             |
-            | Other Paystack events are irrelevant to this endpoint.
+            | Only charge.success is relevant to payment acceptance.
             |
             */
 
-            if ($event !== 'charge.success') {
-
-                Logger::write(
-                    'paystack_escrow_webhook',
-                    [
-                        'step'  => 'EVENT_IGNORED',
-                        'event' => $event
-                    ]
-                );
+            if (
+                $event !== 'charge.success'
+            ) {
 
                 $this->json(
                     [
-                        'success' => true,
-                        'ignored' => true,
-                        'event'   => $event
+                        'success' =>
+                            true,
+
+                        'ignored' =>
+                            true,
+
+                        'event' =>
+                            $event,
                     ],
                     200
                 );
@@ -288,30 +285,35 @@ class EscrowPaystackWebhookListener
                 return;
             }
 
-
             /*
             |--------------------------------------------------------------------------
-            | Transaction
+            | Webhook Transaction
             |--------------------------------------------------------------------------
             */
 
-            $transaction = $payload['data'] ?? null;
+            $webhookTransaction =
+                $payload['data']
+                ?? null;
 
             if (
-                !is_array($transaction)
+                !is_array($webhookTransaction)
             ) {
 
                 Logger::write(
                     'paystack_escrow_webhook_error',
                     [
-                        'step' => 'TRANSACTION_DATA_MISSING'
+                        'step' =>
+                            'TRANSACTION_DATA_MISSING',
                     ]
                 );
 
                 $this->json(
                     [
-                        'success' => false,
-                        'message' => 'Transaction data missing.'
+                        'success' =>
+                            false,
+
+                        'message' =>
+                            'Transaction data missing.',
                     ],
                     400
                 );
@@ -319,33 +321,39 @@ class EscrowPaystackWebhookListener
                 return;
             }
 
-
             /*
             |--------------------------------------------------------------------------
-            | Paystack Reference
+            | Extract Paystack Reference
             |--------------------------------------------------------------------------
             */
 
-            $reference = trim(
-                (string)(
-                    $transaction['reference']
-                    ?? ''
-                )
-            );
+            $reference =
+                trim(
+                    (string)(
+                        $webhookTransaction['reference']
+                        ?? ''
+                    )
+                );
 
-            if ($reference === '') {
+            if (
+                $reference === ''
+            ) {
 
                 Logger::write(
                     'paystack_escrow_webhook_error',
                     [
-                        'step' => 'REFERENCE_MISSING'
+                        'step' =>
+                            'REFERENCE_MISSING',
                     ]
                 );
 
                 $this->json(
                     [
-                        'success' => false,
-                        'message' => 'Transaction reference missing.'
+                        'success' =>
+                            false,
+
+                        'message' =>
+                            'Transaction reference missing.',
                     ],
                     400
                 );
@@ -353,64 +361,70 @@ class EscrowPaystackWebhookListener
                 return;
             }
 
-
             Logger::write(
                 'paystack_escrow_webhook',
                 [
-                    'step'      => 'REFERENCE_EXTRACTED',
-                    'reference' => $reference,
-                    'status'    =>
-                        $transaction['status']
-                        ?? null
+                    'step' =>
+                        'REFERENCE_EXTRACTED',
+
+                    'reference' =>
+                        $reference,
                 ]
             );
-
 
             /*
             |--------------------------------------------------------------------------
             | Verify Directly With Paystack
             |--------------------------------------------------------------------------
             |
-            | The signed webhook proves the request came from Paystack.
+            | The signed webhook authenticates the request.
             |
-            | The Paystack API verification proves the transaction itself
-            | exists and is successful.
+            | PaystackGateway::verify() gives us the authoritative
+            | transaction record.
             |
             */
 
             Logger::write(
                 'paystack_escrow_webhook',
                 [
-                    'step'      => 'VERIFICATION_START',
-                    'reference' => $reference
+                    'step' =>
+                        'PAYSTACK_VERIFY_START',
+
+                    'reference' =>
+                        $reference,
                 ]
             );
 
+            $gateway =
+                new PaystackGateway();
 
-            $gateway = new PaystackGateway();
-
-            $verification = $gateway->verify(
-                $reference
-            );
-
+            $verification =
+                $gateway->verify(
+                    $reference
+                );
 
             Logger::write(
                 'paystack_escrow_webhook',
                 [
-                    'step'      => 'VERIFICATION_RESULT',
-                    'reference' => $reference,
-                    'success'   =>
+                    'step' =>
+                        'PAYSTACK_VERIFY_RESULT',
+
+                    'reference' =>
+                        $reference,
+
+                    'success' =>
                         $verification['success']
                         ?? false,
-                    'status'    =>
+
+                    'status' =>
                         $verification['status']
                         ?? null,
-                    'retry'     =>
+
+                    'retry' =>
                         $verification['retry']
-                        ?? false
+                        ?? false,
                 ]
             );
-
 
             /*
             |--------------------------------------------------------------------------
@@ -419,77 +433,64 @@ class EscrowPaystackWebhookListener
             */
 
             if (
+                !is_array($verification)
+                ||
                 !($verification['success'] ?? false)
             ) {
 
-                $retry = (bool)(
-                    $verification['retry']
-                    ?? true
-                );
+                $retry =
+                    (bool)(
+                        $verification['retry']
+                        ?? true
+                    );
 
                 Logger::write(
                     'paystack_escrow_webhook_error',
                     [
-                        'step'      => 'VERIFICATION_FAILED',
-                        'reference' => $reference,
-                        'retry'     => $retry,
-                        'message'   =>
+                        'step' =>
+                            'PAYSTACK_VERIFY_FAILED',
+
+                        'reference' =>
+                            $reference,
+
+                        'retry' =>
+                            $retry,
+
+                        'message' =>
                             $verification['message']
-                            ?? null
+                            ?? null,
                     ]
                 );
 
-
-                /*
-                |--------------------------------------------------------------------------
-                | Retryable Failure
-                |--------------------------------------------------------------------------
-                |
-                | Return 500 so Paystack can retry.
-                |
-                */
-
-                if ($retry) {
-
-                    $this->json(
-                        [
-                            'success' => false,
-                            'retry'   => true,
-                            'message' =>
-                                'Payment verification temporarily failed.',
-                            'reference' =>
-                                $reference
-                        ],
-                        500
-                    );
-
-                    return;
-                }
-
-
-                /*
-                |--------------------------------------------------------------------------
-                | Permanent Verification Failure
-                |--------------------------------------------------------------------------
-                */
-
                 $this->json(
                     [
-                        'success' => false,
-                        'retry'   => false,
+                        'success' =>
+                            false,
+
+                        'retry' =>
+                            $retry,
+
                         'message' =>
-                            $verification['message']
-                            ??
-                            'Payment verification failed.',
+                            $retry
+                            ?
+                            'Payment verification temporarily failed.'
+                            :
+                            (
+                                $verification['message']
+                                ??
+                                'Payment verification failed.'
+                            ),
+
                         'reference' =>
-                            $reference
+                            $reference,
                     ],
-                    400
+                    $retry
+                    ? 500
+                    : 400
                 );
 
                 return;
             }
-
 
             /*
             |--------------------------------------------------------------------------
@@ -501,7 +502,6 @@ class EscrowPaystackWebhookListener
                 $verification['data']
                 ?? null;
 
-
             if (
                 !is_array($verifiedTransaction)
             ) {
@@ -509,19 +509,27 @@ class EscrowPaystackWebhookListener
                 Logger::write(
                     'paystack_escrow_webhook_error',
                     [
-                        'step'      => 'VERIFIED_TRANSACTION_MISSING',
-                        'reference' => $reference
+                        'step' =>
+                            'VERIFIED_TRANSACTION_MISSING',
+
+                        'reference' =>
+                            $reference,
                     ]
                 );
 
                 $this->json(
                     [
-                        'success' => false,
-                        'retry'   => true,
+                        'success' =>
+                            false,
+
+                        'retry' =>
+                            true,
+
                         'message' =>
                             'Verified transaction data is unavailable.',
+
                         'reference' =>
-                            $reference
+                            $reference,
                     ],
                     500
                 );
@@ -529,48 +537,43 @@ class EscrowPaystackWebhookListener
                 return;
             }
 
-
             /*
             |--------------------------------------------------------------------------
-            | Verify Reference
+            | Verify Reference Integrity
             |--------------------------------------------------------------------------
             */
 
-            $verifiedReference = trim(
-                (string)(
-                    $verifiedTransaction['reference']
-                    ?? ''
-                )
-            );
-
+            $verifiedReference =
+                trim(
+                    (string)(
+                        $verifiedTransaction['reference']
+                        ?? ''
+                    )
+                );
 
             if (
                 $verifiedReference === ''
             ) {
 
-                Logger::write(
-                    'paystack_escrow_webhook_error',
-                    [
-                        'step'      => 'VERIFIED_REFERENCE_MISSING',
-                        'reference' => $reference
-                    ]
-                );
-
                 $this->json(
                     [
-                        'success' => false,
-                        'retry'   => false,
+                        'success' =>
+                            false,
+
+                        'retry' =>
+                            false,
+
                         'message' =>
                             'Verified transaction reference is missing.',
+
                         'reference' =>
-                            $reference
+                            $reference,
                     ],
                     400
                 );
 
                 return;
             }
-
 
             if (
                 !hash_equals(
@@ -589,18 +592,23 @@ class EscrowPaystackWebhookListener
                             $reference,
 
                         'verified_reference' =>
-                            $verifiedReference
+                            $verifiedReference,
                     ]
                 );
 
                 $this->json(
                     [
-                        'success' => false,
-                        'retry'   => false,
+                        'success' =>
+                            false,
+
+                        'retry' =>
+                            false,
+
                         'message' =>
                             'Transaction reference mismatch.',
+
                         'reference' =>
-                            $reference
+                            $reference,
                     ],
                     400
                 );
@@ -608,177 +616,61 @@ class EscrowPaystackWebhookListener
                 return;
             }
 
-
             /*
             |--------------------------------------------------------------------------
-            | Verified Status
+            | Verify Payment Status
             |--------------------------------------------------------------------------
             */
 
-            $verifiedStatus = strtolower(
-                trim(
-                    (string)(
-                        $verifiedTransaction['status']
-                        ?? ''
+            $verifiedStatus =
+                strtolower(
+                    trim(
+                        (string)(
+                            $verifiedTransaction['status']
+                            ?? ''
+                        )
                     )
-                )
-            );
-
+                );
 
             if (
                 $verifiedStatus !== 'success'
             ) {
 
                 Logger::write(
-                    'paystack_escrow_webhook_error',
-                    [
-                        'step'      => 'VERIFIED_PAYMENT_NOT_SUCCESSFUL',
-                        'reference' => $reference,
-                        'status'    => $verifiedStatus
-                    ]
-                );
-
-                $this->json(
-                    [
-                        'success' => false,
-                        'retry'   => false,
-                        'message' =>
-                            'Verified payment is not successful.',
-                        'reference' =>
-                            $reference,
-                        'status' =>
-                            $verifiedStatus
-                    ],
-                    400
-                );
-
-                return;
-            }
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Metadata
-            |--------------------------------------------------------------------------
-            |
-            | PaystackGateway::verify() already normalizes metadata.
-            |
-            | We only fall back to the signed webhook metadata if the
-            | verified response does not contain it.
-            |
-            */
-
-            $verifiedMetadata =
-                $verifiedTransaction['metadata']
-                ?? [];
-
-
-            if (
-                !is_array($verifiedMetadata)
-            ) {
-                $verifiedMetadata = [];
-            }
-
-
-            $webhookMetadata =
-                $transaction['metadata']
-                ?? [];
-
-
-            if (
-                !is_array($webhookMetadata)
-            ) {
-                $webhookMetadata = [];
-            }
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Metadata Merge
-            |--------------------------------------------------------------------------
-            |
-            | Verified Paystack data remains authoritative.
-            |
-            | Webhook metadata is only used to fill missing fields.
-            |
-            */
-
-            $metadata = array_merge(
-                $webhookMetadata,
-                $verifiedMetadata
-            );
-
-
-            $verifiedTransaction['metadata'] =
-                $metadata;
-
-
-            Logger::write(
-                'paystack_escrow_webhook',
-                [
-                    'step'      => 'VERIFIED_METADATA_READY',
-                    'reference' => $verifiedReference,
-                    'metadata'  => $metadata
-                ]
-            );
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Payment Type
-            |--------------------------------------------------------------------------
-            |
-            | IMPORTANT:
-            |
-            | PaystackEscrowPaymentService currently expects:
-            |
-            |     type = escrow
-            |
-            | Therefore initialization must use the same value.
-            |
-            */
-
-            $paymentType = strtolower(
-                trim(
-                    (string)(
-                        $metadata['type']
-                        ?? ''
-                    )
-                )
-            );
-
-
-            if (
-                $paymentType !== 'escrow'
-            ) {
-
-                Logger::write(
                     'paystack_escrow_webhook',
                     [
-                        'step'      => 'NOT_ESCROW_PAYMENT',
-                        'reference' => $verifiedReference,
-                        'type'      => $paymentType
+                        'step' =>
+                            'VERIFIED_PAYMENT_NOT_SUCCESSFUL',
+
+                        'reference' =>
+                            $verifiedReference,
+
+                        'status' =>
+                            $verifiedStatus,
                     ]
                 );
 
                 /*
-                |--------------------------------------------------------------------------
-                | Not Our Transaction
-                |--------------------------------------------------------------------------
-                |
-                | This endpoint should acknowledge unrelated Paystack
-                | transactions instead of retrying them forever.
-                |
-                */
+                 * This is not an infrastructure failure.
+                 * Do not retry indefinitely.
+                 */
 
                 $this->json(
                     [
-                        'success' => true,
-                        'ignored' => true,
+                        'success' =>
+                            true,
+
+                        'ignored' =>
+                            true,
+
                         'message' =>
-                            'Transaction is not an escrow payment.',
+                            'Verified payment is not successful.',
+
                         'reference' =>
-                            $verifiedReference
+                            $verifiedReference,
+
+                        'status' =>
+                            $verifiedStatus,
                     ],
                     200
                 );
@@ -786,143 +678,63 @@ class EscrowPaystackWebhookListener
                 return;
             }
 
-
             /*
             |--------------------------------------------------------------------------
-            | Escrow ID
-            |--------------------------------------------------------------------------
-            */
-
-            $escrowId = (int)(
-                $metadata['escrow_id']
-                ?? 0
-            );
-
-
-            if (
-                $escrowId <= 0
-            ) {
-
-                Logger::write(
-                    'paystack_escrow_webhook_error',
-                    [
-                        'step'      => 'ESCROW_ID_MISSING',
-                        'reference' => $verifiedReference,
-                        'metadata'  => $metadata
-                    ]
-                );
-
-                /*
-                |--------------------------------------------------------------------------
-                | This is not a transient Paystack problem.
-                |--------------------------------------------------------------------------
-                */
-
-                $this->json(
-                    [
-                        'success' => false,
-                        'retry'   => false,
-                        'message' =>
-                            'Escrow ID is missing from payment metadata.',
-                        'reference' =>
-                            $verifiedReference
-                    ],
-                    400
-                );
-
-                return;
-            }
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Escrow Reference
-            |--------------------------------------------------------------------------
-            */
-
-            $escrowReference = strtoupper(
-                trim(
-                    (string)(
-                        $metadata['escrow_reference']
-                        ?? ''
-                    )
-                )
-            );
-
-
-            if (
-                $escrowReference === ''
-            ) {
-
-                Logger::write(
-                    'paystack_escrow_webhook_error',
-                    [
-                        'step'      => 'ESCROW_REFERENCE_MISSING',
-                        'reference' => $verifiedReference,
-                        'escrow_id' => $escrowId
-                    ]
-                );
-
-                $this->json(
-                    [
-                        'success' => false,
-                        'retry'   => false,
-                        'message' =>
-                            'Escrow reference is missing from payment metadata.',
-                        'reference' =>
-                            $verifiedReference,
-                        'escrow_id' =>
-                            $escrowId
-                    ],
-                    400
-                );
-
-                return;
-            }
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Final Payment Reference Protection
-            |--------------------------------------------------------------------------
-            */
-
-            $verifiedTransaction['reference'] =
-                $verifiedReference;
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Process Escrow
+            | Process Escrow Payment
             |--------------------------------------------------------------------------
             |
-            | This is the only business-service call made by this listener.
+            | IMPORTANT:
+            |
+            | We deliberately do NOT merge webhook metadata into
+            | the verified transaction.
+            |
+            | PaystackGateway::verify() is authoritative.
+            |
+            | PaystackEscrowPaymentService owns:
+            |
+            | - escrow metadata validation
+            | - escrow lookup
+            | - payment reference validation
+            | - amount validation
+            | - currency validation
+            | - duplicate protection
+            | - markPaid()
+            | - notifications
             |
             */
 
             Logger::write(
                 'paystack_escrow_webhook',
                 [
-                    'step'            => 'ESCROW_PROCESS_START',
+                    'step' =>
+                        'ESCROW_PROCESS_START',
+
                     'payment_reference' =>
                         $verifiedReference,
-                    'escrow_reference' =>
-                        $escrowReference,
-                    'escrow_id' =>
-                        $escrowId
+
+                    'amount_kobo' =>
+                        $verifiedTransaction['amount']
+                        ?? null,
+
+                    'currency' =>
+                        $verifiedTransaction['currency']
+                        ?? null,
                 ]
             );
 
-
             $service =
                 new PaystackEscrowPaymentService();
-
 
             $result =
                 $service->process(
                     $verifiedTransaction
                 );
 
+            /*
+            |--------------------------------------------------------------------------
+            | Validate Service Result
+            |--------------------------------------------------------------------------
+            */
 
             if (
                 !is_array($result)
@@ -936,22 +748,22 @@ class EscrowPaystackWebhookListener
 
                         'payment_reference' =>
                             $verifiedReference,
-
-                        'escrow_id' =>
-                            $escrowId
                     ]
                 );
 
                 $this->json(
                     [
-                        'success' => false,
-                        'retry'   => true,
+                        'success' =>
+                            false,
+
+                        'retry' =>
+                            true,
+
                         'message' =>
                             'Escrow payment service returned an invalid result.',
+
                         'reference' =>
                             $verifiedReference,
-                        'escrow_id' =>
-                            $escrowId
                     ],
                     500
                 );
@@ -959,209 +771,118 @@ class EscrowPaystackWebhookListener
                 return;
             }
 
+            $success =
+                (bool)(
+                    $result['success']
+                    ?? false
+                );
 
-            Logger::write(
-                'paystack_escrow_webhook',
-                [
-                    'step'            => 'ESCROW_PROCESS_RESULT',
-                    'payment_reference' =>
-                        $verifiedReference,
-                    'escrow_reference' =>
-                        $escrowReference,
-                    'escrow_id' =>
-                        $escrowId,
-                    'success' =>
-                        $result['success']
-                        ?? false,
-                    'already_processed' =>
-                        $result['already_processed']
-                        ?? false
-                ]
-            );
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Service Failed
-            |--------------------------------------------------------------------------
-            */
-
-            if (
-                !($result['success'] ?? false)
-            ) {
-
-                $retry = (bool)(
+            $retry =
+                (bool)(
                     $result['retry']
-                    ?? true
+                    ?? false
                 );
 
-
-                Logger::write(
-                    'paystack_escrow_webhook_error',
-                    [
-                        'step'            => 'ESCROW_PROCESS_FAILED',
-                        'payment_reference' =>
-                            $verifiedReference,
-                        'escrow_id' =>
-                            $escrowId,
-                        'retry' =>
-                            $retry,
-                        'message' =>
-                            $result['message']
-                            ?? null
-                    ]
+            $alreadyProcessed =
+                (bool)(
+                    $result['already_processed']
+                    ?? false
                 );
-
-
-                /*
-                |--------------------------------------------------------------------------
-                | Retryable Internal Failure
-                |--------------------------------------------------------------------------
-                */
-
-                if ($retry) {
-
-                    $this->json(
-                        [
-                            'success' => false,
-                            'retry'   => true,
-                            'message' =>
-                                $result['message']
-                                ??
-                                'Unable to process escrow payment.',
-                            'reference' =>
-                                $verifiedReference,
-                            'escrow_id' =>
-                                $escrowId
-                        ],
-                        500
-                    );
-
-                    return;
-                }
-
-
-                /*
-                |--------------------------------------------------------------------------
-                | Permanent Business Failure
-                |--------------------------------------------------------------------------
-                */
-
-                $this->json(
-                    [
-                        'success' => false,
-                        'retry'   => false,
-                        'message' =>
-                            $result['message']
-                            ??
-                            'Escrow payment could not be processed.',
-                        'reference' =>
-                            $verifiedReference,
-                        'escrow_id' =>
-                            $escrowId
-                    ],
-                    400
-                );
-
-                return;
-            }
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Duplicate Webhook
-            |--------------------------------------------------------------------------
-            */
-
-            $alreadyProcessed = (bool)(
-                $result['already_processed']
-                ?? false
-            );
-
-
-            if ($alreadyProcessed) {
-
-                Logger::write(
-                    'paystack_escrow_webhook',
-                    [
-                        'step' =>
-                            'ESCROW_ALREADY_PROCESSED',
-
-                        'payment_reference' =>
-                            $verifiedReference,
-
-                        'escrow_reference' =>
-                            $escrowReference,
-
-                        'escrow_id' =>
-                            $escrowId
-                    ]
-                );
-            }
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Success
-            |--------------------------------------------------------------------------
-            */
-
-            $finalEscrowId = (int)(
-                $result['escrow_id']
-                ?? $escrowId
-            );
-
-
-            $message =
-                trim(
-                    (string)(
-                        $result['message']
-                        ?? ''
-                    )
-                );
-
-
-            if ($message === '') {
-
-                $message =
-                    $alreadyProcessed
-                    ? 'Escrow payment was already processed.'
-                    : 'Escrow payment processed successfully.';
-            }
-
 
             Logger::write(
                 'paystack_escrow_webhook',
                 [
                     'step' =>
-                        'WEBHOOK_COMPLETE',
+                        'ESCROW_PROCESS_RESULT',
 
                     'payment_reference' =>
                         $verifiedReference,
 
-                    'escrow_reference' =>
-                        $escrowReference,
+                    'success' =>
+                        $success,
 
-                    'escrow_id' =>
-                        $finalEscrowId,
+                    'retry' =>
+                        $retry,
 
                     'already_processed' =>
-                        $alreadyProcessed
+                        $alreadyProcessed,
+
+                    'escrow_reference' =>
+                        $result['reference']
+                        ?? null,
+
+                    'escrow_id' =>
+                        $result['escrow_id']
+                        ?? null,
+
+                    'status' =>
+                        $result['status']
+                        ?? null,
                 ]
             );
 
+            /*
+            |--------------------------------------------------------------------------
+            | Escrow Processing Failed
+            |--------------------------------------------------------------------------
+            */
+
+            if (!$success) {
+
+                $this->json(
+                    [
+                        'success' =>
+                            false,
+
+                        'retry' =>
+                            $retry,
+
+                        'message' =>
+                            $result['message']
+                            ??
+                            'Escrow payment processing failed.',
+
+                        'reference' =>
+                            $verifiedReference,
+
+                        'escrow_reference' =>
+                            $result['reference']
+                            ?? null,
+
+                        'escrow_id' =>
+                            $result['escrow_id']
+                            ?? null,
+                    ],
+                    $retry
+                    ? 500
+                    : 400
+                );
+
+                return;
+            }
 
             /*
             |--------------------------------------------------------------------------
-            | IMPORTANT
+            | Success / Idempotent Success
             |--------------------------------------------------------------------------
             |
-            | Always return 200 after successful processing.
+            | Always return HTTP 200.
             |
-            | This also prevents Paystack from repeatedly sending an already
-            | processed webhook.
+            | This prevents Paystack from repeatedly retrying a
+            | payment that has already been processed.
             |
             */
+
+            $message =
+                $result['message']
+                ??
+                (
+                    $alreadyProcessed
+                    ?
+                    'Escrow payment was already processed.'
+                    :
+                    'Escrow payment processed successfully.'
+                );
 
             $this->json(
                 [
@@ -1175,19 +896,24 @@ class EscrowPaystackWebhookListener
                         $verifiedReference,
 
                     'escrow_reference' =>
-                        $escrowReference,
+                        $result['reference']
+                        ?? null,
 
                     'escrow_id' =>
-                        $finalEscrowId,
+                        $result['escrow_id']
+                        ?? null,
+
+                    'status' =>
+                        $result['status']
+                        ?? null,
 
                     'already_processed' =>
-                        $alreadyProcessed
+                        $alreadyProcessed,
                 ],
                 200
             );
 
-        }
-        catch (Throwable $e) {
+        } catch (Throwable $e) {
 
             Logger::write(
                 'paystack_escrow_webhook_error',
@@ -1208,26 +934,24 @@ class EscrowPaystackWebhookListener
                         $e->getTraceAsString(),
 
                     'raw_payload' =>
-                        $rawPayload
+                        $rawPayload,
                 ]
             );
 
-
             /*
-            |--------------------------------------------------------------------------
-            | Internal Exception
-            |--------------------------------------------------------------------------
-            |
-            | Return 500 so the webhook remains retryable.
-            |
-            */
+             * 500 intentionally causes Paystack to retry.
+             */
 
             $this->json(
                 [
-                    'success' => false,
-                    'retry'   => true,
+                    'success' =>
+                        false,
+
+                    'retry' =>
+                        true,
+
                     'message' =>
-                        'Escrow webhook processing failed.'
+                        'Escrow webhook processing failed.',
                 ],
                 500
             );
@@ -1237,20 +961,7 @@ class EscrowPaystackWebhookListener
 
     /**
      * ---------------------------------------------------------
-     * Validate Paystack Webhook Signature
-     * ---------------------------------------------------------
-     *
-     * Paystack:
-     *
-     * hash_hmac(
-     *     'sha512',
-     *     raw_payload,
-     *     PAYSTACK_SECRET_KEY
-     * )
-     *
-     * Header:
-     *
-     * X-Paystack-Signature
+     * Validate Paystack Signature
      * ---------------------------------------------------------
      */
     protected function validateSignature(
@@ -1264,7 +975,6 @@ class EscrowPaystackWebhookListener
                     'X-Paystack-Signature'
                 );
 
-
             if (
                 $signature === ''
             ) {
@@ -1273,13 +983,12 @@ class EscrowPaystackWebhookListener
                     'paystack_escrow_webhook_error',
                     [
                         'step' =>
-                            'SIGNATURE_HEADER_MISSING'
+                            'SIGNATURE_HEADER_MISSING',
                     ]
                 );
 
                 return false;
             }
-
 
             if (
                 !defined(
@@ -1291,19 +1000,19 @@ class EscrowPaystackWebhookListener
                     'paystack_escrow_webhook_error',
                     [
                         'step' =>
-                            'PAYSTACK_SECRET_KEY_NOT_DEFINED'
+                            'SECRET_KEY_NOT_DEFINED',
                     ]
                 );
 
                 return false;
             }
 
-
             $secret =
                 trim(
-                    (string)PAYSTACK_SECRET_KEY
+                    (string)(
+                        PAYSTACK_SECRET_KEY
+                    )
                 );
-
 
             if (
                 $secret === ''
@@ -1313,13 +1022,12 @@ class EscrowPaystackWebhookListener
                     'paystack_escrow_webhook_error',
                     [
                         'step' =>
-                            'PAYSTACK_SECRET_KEY_EMPTY'
+                            'SECRET_KEY_EMPTY',
                     ]
                 );
 
                 return false;
             }
-
 
             $expected =
                 hash_hmac(
@@ -1328,13 +1036,11 @@ class EscrowPaystackWebhookListener
                     $secret
                 );
 
-
             $valid =
                 hash_equals(
                     $expected,
                     trim($signature)
                 );
-
 
             Logger::write(
                 'paystack_escrow_webhook',
@@ -1343,21 +1049,19 @@ class EscrowPaystackWebhookListener
                         'SIGNATURE_CHECK',
 
                     'valid' =>
-                        $valid
+                        $valid,
                 ]
             );
 
-
             return $valid;
 
-        }
-        catch (Throwable $e) {
+        } catch (Throwable $e) {
 
             Logger::write(
                 'paystack_escrow_webhook_error',
                 [
                     'step' =>
-                        'SIGNATURE_VALIDATION_EXCEPTION',
+                        'SIGNATURE_EXCEPTION',
 
                     'message' =>
                         $e->getMessage(),
@@ -1366,7 +1070,7 @@ class EscrowPaystackWebhookListener
                         $e->getFile(),
 
                     'line' =>
-                        $e->getLine()
+                        $e->getLine(),
                 ]
             );
 
@@ -1387,13 +1091,11 @@ class EscrowPaystackWebhookListener
         $name =
             trim($name);
 
-
         if (
             $name === ''
         ) {
             return '';
         }
-
 
         /*
         |--------------------------------------------------------------------------
@@ -1410,7 +1112,6 @@ class EscrowPaystackWebhookListener
             $headers =
                 getallheaders();
 
-
             if (
                 is_array($headers)
             ) {
@@ -1421,15 +1122,12 @@ class EscrowPaystackWebhookListener
                 ) {
 
                     if (
-                        strtolower(
+                        strcasecmp(
                             trim(
                                 (string)$key
-                            )
-                        )
-                        ===
-                        strtolower(
+                            ),
                             $name
-                        )
+                        ) === 0
                     ) {
 
                         return trim(
@@ -1440,7 +1138,6 @@ class EscrowPaystackWebhookListener
             }
         }
 
-
         /*
         |--------------------------------------------------------------------------
         | PHP-FPM / Apache / Nginx
@@ -1448,8 +1145,7 @@ class EscrowPaystackWebhookListener
         */
 
         $serverKey =
-            'HTTP_'
-            .
+            'HTTP_' .
             strtoupper(
                 str_replace(
                     '-',
@@ -1457,7 +1153,6 @@ class EscrowPaystackWebhookListener
                     $name
                 )
             );
-
 
         if (
             isset(
@@ -1472,14 +1167,13 @@ class EscrowPaystackWebhookListener
             );
         }
 
-
         /*
         |--------------------------------------------------------------------------
-        | Some servers expose Authorization-style headers differently.
+        | Normalized Header Fallback
         |--------------------------------------------------------------------------
         */
 
-        $normalizedName =
+        $normalized =
             strtoupper(
                 str_replace(
                     '-',
@@ -1488,20 +1182,18 @@ class EscrowPaystackWebhookListener
                 )
             );
 
-
         if (
             isset(
-                $_SERVER[$normalizedName]
+                $_SERVER[$normalized]
             )
         ) {
 
             return trim(
                 (string)(
-                    $_SERVER[$normalizedName]
+                    $_SERVER[$normalized]
                 )
             );
         }
-
 
         return '';
     }
@@ -1521,7 +1213,6 @@ class EscrowPaystackWebhookListener
             $status
         );
 
-
         if (
             !headers_sent()
         ) {
@@ -1531,7 +1222,6 @@ class EscrowPaystackWebhookListener
             );
         }
 
-
         $encoded =
             json_encode(
                 $data,
@@ -1540,17 +1230,11 @@ class EscrowPaystackWebhookListener
                 JSON_UNESCAPED_SLASHES
             );
 
-
-        if (
-            $encoded === false
-        ) {
-
-            echo '{"success":false,"message":"Unable to encode response."}';
-
-            return;
-        }
-
-
-        echo $encoded;
+        echo
+            $encoded !== false
+            ?
+            $encoded
+            :
+            '{"success":false,"message":"Unable to encode response."}';
     }
 }

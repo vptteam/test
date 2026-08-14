@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Services\Escrow;
 
+use Core\Database;
 use Core\Logger;
 use Models\User;
 use Modules\Escrow\Models\Escrow;
@@ -37,7 +38,7 @@ class EscrowApiService
         Logger::write(
             'escrow_api_service',
             [
-                'step' => 'CONSTRUCTOR'
+                'step' => 'CONSTRUCTOR',
             ]
         );
     }
@@ -45,38 +46,374 @@ class EscrowApiService
 
     /**
      * ---------------------------------------------------------
-     * Verify Escrow / Listing
+     * GET ESCROW BY REFERENCE
      * ---------------------------------------------------------
      *
-     * Used by:
+     * Internal API helper.
      *
-     * Website
-     * Mobile App
-     * SMS
-     * USSD
+     * This method is intentionally kept here so controllers
+     * never need to instantiate the Escrow model directly.
+     * ---------------------------------------------------------
+     */
+    public function getEscrowByReference(
+        string $reference
+    ): ?array {
+        try {
+
+            $reference =
+                $this->normalizeReference(
+                    $reference
+                );
+
+            if ($reference === '') {
+
+                Logger::write(
+                    'escrow_api_service_error',
+                    [
+                        'step' =>
+                            'GET_ESCROW_REFERENCE_MISSING',
+                    ]
+                );
+
+                return null;
+            }
+
+
+            $escrow =
+                $this->escrowModel
+                    ->findByReference(
+                        $reference
+                    );
+
+
+            Logger::write(
+                'escrow_api_service',
+                [
+                    'step' =>
+                        'GET_ESCROW_BY_REFERENCE',
+
+                    'reference' =>
+                        $reference,
+
+                    'found' =>
+                        is_array($escrow)
+                        && !empty($escrow),
+                ]
+            );
+
+
+            if (
+                !is_array($escrow)
+                ||
+                empty($escrow)
+            ) {
+                return null;
+            }
+
+
+            return $escrow;
+
+        }
+        catch (Throwable $e) {
+
+            Logger::write(
+                'escrow_api_service_error',
+                [
+                    'step' =>
+                        'GET_ESCROW_BY_REFERENCE_EXCEPTION',
+
+                    'reference' =>
+                        $reference ?? '',
+
+                    'message' =>
+                        $e->getMessage(),
+
+                    'file' =>
+                        $e->getFile(),
+
+                    'line' =>
+                        $e->getLine(),
+                ]
+            );
+
+            return null;
+        }
+    }
+
+
+    /**
+     * ---------------------------------------------------------
+     * VERIFY ESCROW
+     * ---------------------------------------------------------
      *
-     * Example:
+     * Public API verification.
      *
-     * VERIFY SDM-000033
-     *
+     * Does not expose internal database IDs or private
+     * payment/workflow information.
      * ---------------------------------------------------------
      */
     public function verify(
         string $reference
     ): array {
-
         try {
 
             $reference =
-                strtoupper(
-                    trim($reference)
+                $this->normalizeReference(
+                    $reference
                 );
+
 
             Logger::write(
                 'escrow_api_service',
                 [
-                    'step' => 'VERIFY_START',
-                    'reference' => $reference
+                    'step' =>
+                        'VERIFY_START',
+
+                    'reference' =>
+                        $reference,
+                ]
+            );
+
+
+            if ($reference === '') {
+
+                return [
+                    'success' => false,
+
+                    'message' =>
+                        'Escrow reference is required.',
+                ];
+            }
+
+
+            $escrow =
+                $this->getEscrowByReference(
+                    $reference
+                );
+
+
+            if (!$escrow) {
+
+                Logger::write(
+                    'escrow_api_service',
+                    [
+                        'step' =>
+                            'VERIFY_ESCROW_NOT_FOUND',
+
+                        'reference' =>
+                            $reference,
+                    ]
+                );
+
+
+                return [
+                    'success' => false,
+
+                    'message' =>
+                        'Escrow transaction not found.',
+
+                    'reference' =>
+                        $reference,
+                ];
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Seller
+            |--------------------------------------------------------------------------
+            */
+
+            $seller = null;
+
+            $sellerId =
+                (int)(
+                    $escrow['seller_id']
+                    ?? 0
+                );
+
+
+            if ($sellerId > 0) {
+
+                $seller =
+                    $this->userModel
+                        ->find(
+                            $sellerId
+                        );
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Public Response
+            |--------------------------------------------------------------------------
+            */
+
+            $status =
+                strtolower(
+                    trim(
+                        (string)(
+                            $escrow['status']
+                            ?? 'pending'
+                        )
+                    )
+                );
+
+
+            $currency =
+                strtoupper(
+                    trim(
+                        (string)(
+                            $escrow['currency']
+                            ?? 'NGN'
+                        )
+                    )
+                );
+
+
+            $response = [
+
+                'success' =>
+                    true,
+
+                'reference' =>
+                    $reference,
+
+                'status' =>
+                    $status,
+
+                'item' =>
+                    $this->itemName(
+                        $escrow
+                    ),
+
+                'amount' =>
+                    $this->amount(
+                        $escrow
+                    ),
+
+                'currency' =>
+                    $currency,
+
+                'location' =>
+                    $this->location(
+                        $escrow
+                    ),
+
+                'seller' =>
+                    $this->sellerName(
+                        $seller
+                    ),
+
+                'seller_verified' =>
+                    $this->sellerVerified(
+                        $seller
+                    ),
+            ];
+
+
+            Logger::write(
+                'escrow_api_service',
+                [
+                    'step' =>
+                        'VERIFY_COMPLETE',
+
+                    'reference' =>
+                        $reference,
+
+                    'status' =>
+                        $status,
+                ]
+            );
+
+
+            return $response;
+
+        }
+        catch (Throwable $e) {
+
+            Logger::write(
+                'escrow_api_service_error',
+                [
+                    'step' =>
+                        'VERIFY_EXCEPTION',
+
+                    'reference' =>
+                        $reference ?? '',
+
+                    'message' =>
+                        $e->getMessage(),
+
+                    'file' =>
+                        $e->getFile(),
+
+                    'line' =>
+                        $e->getLine(),
+
+                    'trace' =>
+                        $e->getTraceAsString(),
+                ]
+            );
+
+
+            return [
+                'success' => false,
+
+                'message' =>
+                    'Unable to verify escrow.',
+            ];
+        }
+    }
+
+
+    /**
+     * ---------------------------------------------------------
+     * CONFIRM RECEIPT
+     * ---------------------------------------------------------
+     *
+     * API equivalent of:
+     *
+     * RECEIVED ESC-XXXXXX
+     *
+     * Authentication:
+     *
+     * escrow reference
+     * +
+     * buyer phone number
+     *
+     * The existing EscrowConfirmationService remains the
+     * authoritative workflow for the actual confirmation.
+     * ---------------------------------------------------------
+     */
+    public function confirmReceipt(
+        string $reference,
+        string $phone
+    ): array {
+        try {
+
+            $reference =
+                $this->normalizeReference(
+                    $reference
+                );
+
+
+            $phone =
+                $this->normalizePhone(
+                    $phone
+                );
+
+
+            Logger::write(
+                'escrow_api_service',
+                [
+                    'step' =>
+                        'CONFIRM_RECEIPT_START',
+
+                    'reference' =>
+                        $reference,
+
+                    'phone' =>
+                        $phone,
                 ]
             );
 
@@ -91,243 +428,26 @@ class EscrowApiService
 
                 return [
                     'success' => false,
-                    'message' => 'Escrow reference is required.'
-                ];
-            }
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Load Escrow
-            |--------------------------------------------------------------------------
-            */
-
-            $escrow =
-                $this->escrowModel
-                    ->findByReference(
-                        $reference
-                    );
-
-
-            Logger::write(
-                'escrow_api_service',
-                [
-                    'step' => 'ESCROW_LOOKUP',
-                    'reference' => $reference,
-                    'found' => $escrow !== null
-                ]
-            );
-
-
-            if (!$escrow) {
-
-                return [
-                    'success' => false,
-                    'message' => 'Escrow transaction not found.',
-                    'reference' => $reference
-                ];
-            }
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Determine Seller
-            |--------------------------------------------------------------------------
-            */
-
-            $seller = null;
-
-            if (
-                !empty($escrow['seller_id'])
-            ) {
-
-                $seller =
-                    $this->userModel->find(
-                        (int)$escrow['seller_id']
-                    );
-            }
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Build Safe Public Response
-            |--------------------------------------------------------------------------
-            |
-            | DO NOT expose:
-            |
-            | - seller ID
-            | - buyer ID
-            | - internal database IDs
-            | - recipient codes
-            | - private account information
-            | - internal workflow data
-            |
-            */
-
-            $amount =
-                $this->amount(
-                    $escrow
-                );
-
-
-            $response = [
-
-                'success' =>
-                    true,
-
-                'reference' =>
-                    $reference,
-
-                'status' =>
-                    $escrow['status']
-                    ?? null,
-
-                'item' =>
-                    $this->itemName(
-                        $escrow
-                    ),
-
-                'amount' =>
-                    $amount,
-
-                'currency' =>
-                    $escrow['currency']
-                    ?? 'NGN',
-
-                'location' =>
-                    $escrow['location']
-                    ?? null,
-
-                'seller' =>
-                    $this->sellerName(
-                        $seller
-                    ),
-
-                'seller_verified' =>
-                    $this->sellerVerified(
-                        $seller
-                    )
-
-            ];
-
-
-            Logger::write(
-                'escrow_api_service',
-                [
-                    'step' => 'VERIFY_COMPLETE',
-                    'reference' => $reference,
-                    'status' =>
-                        $escrow['status']
-                        ?? null
-                ]
-            );
-
-
-            return $response;
-
-        }
-        catch (Throwable $e) {
-
-            Logger::write(
-                'escrow_api_service_error',
-                [
-                    'step' => 'VERIFY_EXCEPTION',
-                    'reference' => $reference,
-                    'message' => $e->getMessage(),
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine()
-                ]
-            );
-
-
-            return [
-
-                'success' => false,
-
-                'message' =>
-                    'Unable to verify escrow.'
-
-            ];
-        }
-    }
-
-
-    /**
-     * ---------------------------------------------------------
-     * Confirm Receipt From API
-     * ---------------------------------------------------------
-     *
-     * This is the API equivalent of:
-     *
-     * RECEIVED ESCXXXXXXXX
-     *
-     * Security:
-     *
-     * reference + buyer phone
-     *
-     * are both required.
-     *
-     * The phone must resolve to the same internal
-     * user ID stored as escrow.buyer_id.
-     *
-     * ---------------------------------------------------------
-     */
-    public function confirmReceipt(
-        string $reference,
-        string $phone
-    ): array {
-
-        try {
-
-            $reference =
-                strtoupper(
-                    trim($reference)
-                );
-
-            $phone =
-                $this->normalizePhone(
-                    $phone
-                );
-
-
-            Logger::write(
-                'escrow_api_service',
-                [
-                    'step' => 'CONFIRM_RECEIPT_START',
-                    'reference' => $reference,
-                    'phone' => $phone
-                ]
-            );
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Validate Input
-            |--------------------------------------------------------------------------
-            */
-
-            if ($reference === '') {
-
-                return [
-
-                    'success' => false,
 
                     'message' =>
-                        'Escrow reference is required.'
-
+                        'Escrow reference is required.',
                 ];
             }
 
+
+            /*
+            |--------------------------------------------------------------------------
+            | Validate Phone
+            |--------------------------------------------------------------------------
+            */
 
             if ($phone === '') {
 
                 return [
-
                     'success' => false,
 
                     'message' =>
-                        'Buyer phone number is required.'
-
+                        'Buyer phone number is required.',
                 ];
             }
 
@@ -339,10 +459,9 @@ class EscrowApiService
             */
 
             $escrow =
-                $this->escrowModel
-                    ->findByReference(
-                        $reference
-                    );
+                $this->getEscrowByReference(
+                    $reference
+                );
 
 
             if (!$escrow) {
@@ -350,19 +469,20 @@ class EscrowApiService
                 Logger::write(
                     'escrow_api_service',
                     [
-                        'step' => 'CONFIRM_ESCROW_NOT_FOUND',
-                        'reference' => $reference
+                        'step' =>
+                            'CONFIRM_ESCROW_NOT_FOUND',
+
+                        'reference' =>
+                            $reference,
                     ]
                 );
 
 
                 return [
-
                     'success' => false,
 
                     'message' =>
-                        'Escrow transaction not found.'
-
+                        'Escrow transaction not found.',
                 ];
             }
 
@@ -373,38 +493,52 @@ class EscrowApiService
             |--------------------------------------------------------------------------
             */
 
+            $status =
+                strtolower(
+                    trim(
+                        (string)(
+                            $escrow['status']
+                            ?? ''
+                        )
+                    )
+                );
+
+
             if (
-                ($escrow['status'] ?? '')
-                ===
-                'completed'
+                $status === 'completed'
             ) {
 
-                return [
+                Logger::write(
+                    'escrow_api_service',
+                    [
+                        'step' =>
+                            'CONFIRM_ALREADY_COMPLETED',
 
+                        'reference' =>
+                            $reference,
+                    ]
+                );
+
+
+                return [
                     'success' => false,
 
                     'message' =>
                         'This escrow has already been completed.',
 
                     'reference' =>
-                        $reference
+                        $reference,
 
+                    'status' =>
+                        $status,
                 ];
             }
 
 
             /*
             |--------------------------------------------------------------------------
-            | Find Buyer By Phone
+            | Find Buyer
             |--------------------------------------------------------------------------
-            |
-            | IMPORTANT:
-            |
-            | The phone number is only an external identity.
-            |
-            | We convert it to users.id and compare that internal
-            | ID against escrow.buyer_id.
-            |
             */
 
             $buyer =
@@ -413,39 +547,25 @@ class EscrowApiService
                 );
 
 
-            Logger::write(
-                'escrow_api_service',
-                [
-                    'step' => 'BUYER_LOOKUP',
-                    'reference' => $reference,
-                    'phone' => $phone,
-                    'buyer_id' =>
-                        $buyer['id']
-                        ?? null
-                ]
-            );
-
-
             if (!$buyer) {
 
                 Logger::write(
-                    'escrow_api_service',
+                    'escrow_api_service_error',
                     [
                         'step' =>
                             'BUYER_PHONE_NOT_REGISTERED',
-                        'reference' => $reference,
-                        'phone' => $phone
+
+                        'reference' =>
+                            $reference,
                     ]
                 );
 
 
                 return [
-
                     'success' => false,
 
                     'message' =>
-                        'Buyer phone number is not registered.'
-
+                        'Buyer phone number is not registered.',
                 ];
             }
 
@@ -462,6 +582,7 @@ class EscrowApiService
                     ?? 0
                 );
 
+
             $actualBuyerId =
                 (int)(
                     $buyer['id']
@@ -472,12 +593,17 @@ class EscrowApiService
             Logger::write(
                 'escrow_api_service',
                 [
-                    'step' => 'BUYER_AUTHORIZATION',
-                    'reference' => $reference,
+                    'step' =>
+                        'BUYER_AUTHORIZATION',
+
+                    'reference' =>
+                        $reference,
+
                     'expected_buyer_id' =>
                         $expectedBuyerId,
+
                     'actual_buyer_id' =>
-                        $actualBuyerId
+                        $actualBuyerId,
                 ]
             );
 
@@ -487,60 +613,46 @@ class EscrowApiService
                 ||
                 $actualBuyerId <= 0
                 ||
-                $expectedBuyerId
-                !==
-                $actualBuyerId
+                $expectedBuyerId !== $actualBuyerId
             ) {
 
                 Logger::write(
-                    'escrow_api_service',
+                    'escrow_api_service_error',
                     [
                         'step' =>
                             'BUYER_AUTHORIZATION_FAILED',
-                        'reference' => $reference
+
+                        'reference' =>
+                            $reference,
                     ]
                 );
 
 
                 return [
-
                     'success' => false,
 
                     'message' =>
-                        'This phone number is not authorized to confirm this escrow.'
-
+                        'This phone number is not authorized to confirm this escrow.',
                 ];
             }
 
 
             /*
             |--------------------------------------------------------------------------
-            | Authorized
-            |--------------------------------------------------------------------------
-            */
-
-            Logger::write(
-                'escrow_api_service',
-                [
-                    'step' => 'BUYER_AUTHORIZED',
-                    'reference' => $reference,
-                    'buyer_id' => $actualBuyerId
-                ]
-            );
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Existing Escrow Confirmation Workflow
+            | Existing Confirmation Workflow
             |--------------------------------------------------------------------------
             |
-            | IMPORTANT:
+            | DO NOT duplicate:
             |
-            | We do NOT duplicate buyerConfirm(), notification,
-            | payout-bank workflow, admin notification, etc.
+            | - escrow state transition
+            | - seller notification
+            | - admin notification
+            | - payout-bank handling
+            | - wallet handling
+            | - transaction creation
             |
-            | EscrowConfirmationService remains the source of truth.
-            |
+            | EscrowConfirmationService owns those operations.
+            |--------------------------------------------------------------------------
             */
 
             $result =
@@ -554,34 +666,43 @@ class EscrowApiService
             Logger::write(
                 'escrow_api_service',
                 [
-                    'step' => 'CONFIRMATION_SERVICE_RESULT',
-                    'reference' => $reference,
-                    'buyer_id' => $actualBuyerId,
-                    'result' => $result
+                    'step' =>
+                        'CONFIRMATION_SERVICE_RESULT',
+
+                    'reference' =>
+                        $reference,
+
+                    'buyer_id' =>
+                        $actualBuyerId,
+
+                    'result' =>
+                        $result,
                 ]
             );
 
 
-            if (
-                !is_array($result)
-            ) {
+            if (!is_array($result)) {
+
+                Logger::write(
+                    'escrow_api_service_error',
+                    [
+                        'step' =>
+                            'CONFIRMATION_INVALID_RESULT',
+
+                        'reference' =>
+                            $reference,
+                    ]
+                );
+
 
                 return [
-
                     'success' => false,
 
                     'message' =>
-                        'Unable to confirm receipt.'
-
+                        'Unable to confirm receipt.',
                 ];
             }
 
-
-            /*
-            |--------------------------------------------------------------------------
-            | Return Existing Workflow Result
-            |--------------------------------------------------------------------------
-            */
 
             return $result;
 
@@ -591,24 +712,35 @@ class EscrowApiService
             Logger::write(
                 'escrow_api_service_error',
                 [
-                    'step' => 'CONFIRM_RECEIPT_EXCEPTION',
-                    'reference' => $reference,
-                    'phone' => $phone,
-                    'message' => $e->getMessage(),
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine(),
-                    'trace' => $e->getTraceAsString()
+                    'step' =>
+                        'CONFIRM_RECEIPT_EXCEPTION',
+
+                    'reference' =>
+                        $reference ?? '',
+
+                    'phone' =>
+                        $phone ?? '',
+
+                    'message' =>
+                        $e->getMessage(),
+
+                    'file' =>
+                        $e->getFile(),
+
+                    'line' =>
+                        $e->getLine(),
+
+                    'trace' =>
+                        $e->getTraceAsString(),
                 ]
             );
 
 
             return [
-
                 'success' => false,
 
                 'message' =>
-                    'Unable to confirm receipt.'
-
+                    'Unable to confirm receipt.',
             ];
         }
     }
@@ -616,20 +748,20 @@ class EscrowApiService
 
     /**
      * ---------------------------------------------------------
-     * Find User By Phone
+     * FIND USER BY PHONE
      * ---------------------------------------------------------
      *
-     * The users table may store phone values in different
-     * formats depending on the platform.
+     * Supports:
      *
-     * We first attempt exact matches against common formats.
+     * 08012345678
+     * 2348012345678
+     * +2348012345678
      *
      * ---------------------------------------------------------
      */
     protected function findUserByPhone(
         string $phone
     ): ?array {
-
         try {
 
             $phone =
@@ -639,65 +771,33 @@ class EscrowApiService
 
 
             if ($phone === '') {
-
                 return null;
             }
 
 
             $db =
-                \Core\Database
-                    ::getInstance()
+                Database::getInstance()
                     ->connection();
 
 
             /*
             |--------------------------------------------------------------------------
-            | Try Exact Phone
+            | Build Possible Formats
             |--------------------------------------------------------------------------
             */
 
-            $stmt =
-                $db->prepare(
-                    "
-                    SELECT *
+            $variants = [
+                $phone,
+            ];
 
-                    FROM users
-
-                    WHERE phone = ?
-
-                    LIMIT 1
-                    "
-                );
-
-
-            $stmt->execute(
-                [
-                    $phone
-                ]
-            );
-
-
-            $user =
-                $stmt->fetch();
-
-
-            if ($user) {
-
-                return $user;
-            }
-
-
-            /*
-            |--------------------------------------------------------------------------
-            | Try Nigerian +234 Format
-            |--------------------------------------------------------------------------
-            */
 
             if (
                 str_starts_with(
                     $phone,
                     '234'
                 )
+                &&
+                strlen($phone) > 3
             ) {
 
                 $local =
@@ -709,49 +809,18 @@ class EscrowApiService
                     );
 
 
-                $stmt =
-                    $db->prepare(
-                        "
-                        SELECT *
-
-                        FROM users
-
-                        WHERE phone = ?
-
-                        LIMIT 1
-                        "
-                    );
-
-
-                $stmt->execute(
-                    [
-                        $local
-                    ]
-                );
-
-
-                $user =
-                    $stmt->fetch();
-
-
-                if ($user) {
-
-                    return $user;
-                }
+                $variants[] =
+                    $local;
             }
 
-
-            /*
-            |--------------------------------------------------------------------------
-            | Try Local Nigerian Phone
-            |--------------------------------------------------------------------------
-            */
 
             if (
                 str_starts_with(
                     $phone,
                     '0'
                 )
+                &&
+                strlen($phone) === 11
             ) {
 
                 $international =
@@ -763,15 +832,41 @@ class EscrowApiService
                     );
 
 
+                $variants[] =
+                    $international;
+            }
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Remove Duplicate Variants
+            |--------------------------------------------------------------------------
+            */
+
+            $variants =
+                array_values(
+                    array_unique(
+                        array_filter(
+                            $variants
+                        )
+                    )
+                );
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Query
+            |--------------------------------------------------------------------------
+            */
+
+            foreach ($variants as $variant) {
+
                 $stmt =
                     $db->prepare(
                         "
                         SELECT *
-
                         FROM users
-
                         WHERE phone = ?
-
                         LIMIT 1
                         "
                     );
@@ -779,7 +874,7 @@ class EscrowApiService
 
                 $stmt->execute(
                     [
-                        $international
+                        $variant,
                     ]
                 );
 
@@ -788,7 +883,27 @@ class EscrowApiService
                     $stmt->fetch();
 
 
-                if ($user) {
+                if (
+                    is_array($user)
+                    &&
+                    !empty($user)
+                ) {
+
+                    Logger::write(
+                        'escrow_api_service',
+                        [
+                            'step' =>
+                                'BUYER_FOUND_BY_PHONE',
+
+                            'matched_format' =>
+                                $variant,
+
+                            'user_id' =>
+                                $user['id']
+                                ?? null,
+                        ]
+                    );
+
 
                     return $user;
                 }
@@ -803,11 +918,20 @@ class EscrowApiService
             Logger::write(
                 'escrow_api_service_error',
                 [
-                    'step' => 'FIND_USER_BY_PHONE_FAILED',
-                    'phone' => $phone,
-                    'message' => $e->getMessage(),
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine()
+                    'step' =>
+                        'FIND_USER_BY_PHONE_EXCEPTION',
+
+                    'phone' =>
+                        $phone ?? '',
+
+                    'message' =>
+                        $e->getMessage(),
+
+                    'file' =>
+                        $e->getFile(),
+
+                    'line' =>
+                        $e->getLine(),
                 ]
             );
 
@@ -819,7 +943,24 @@ class EscrowApiService
 
     /**
      * ---------------------------------------------------------
-     * Normalize Phone
+     * NORMALIZE REFERENCE
+     * ---------------------------------------------------------
+     */
+    protected function normalizeReference(
+        string $reference
+    ): string {
+
+        return strtoupper(
+            trim(
+                $reference
+            )
+        );
+    }
+
+
+    /**
+     * ---------------------------------------------------------
+     * NORMALIZE PHONE
      * ---------------------------------------------------------
      */
     protected function normalizePhone(
@@ -827,7 +968,9 @@ class EscrowApiService
     ): string {
 
         $phone =
-            trim($phone);
+            trim(
+                $phone
+            );
 
 
         /*
@@ -837,30 +980,17 @@ class EscrowApiService
         */
 
         $phone =
-            str_replace(
-                'whatsapp:',
+            preg_replace(
+                '/^whatsapp:/i',
                 '',
                 $phone
-            );
+            )
+            ?? '';
 
 
         /*
         |--------------------------------------------------------------------------
-        | Remove +
-        |--------------------------------------------------------------------------
-        */
-
-        $phone =
-            str_replace(
-                '+',
-                '',
-                $phone
-            );
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | Remove spaces / brackets / hyphens
+        | Keep Digits Only
         |--------------------------------------------------------------------------
         */
 
@@ -875,7 +1005,7 @@ class EscrowApiService
 
         /*
         |--------------------------------------------------------------------------
-        | Convert Nigerian Local Number
+        | Nigerian Local -> International
         |--------------------------------------------------------------------------
         */
 
@@ -904,7 +1034,7 @@ class EscrowApiService
 
     /**
      * ---------------------------------------------------------
-     * Amount
+     * AMOUNT
      * ---------------------------------------------------------
      */
     protected function amount(
@@ -921,6 +1051,8 @@ class EscrowApiService
 
         if (
             $value === null
+            ||
+            !is_numeric($value)
         ) {
 
             return null;
@@ -933,7 +1065,7 @@ class EscrowApiService
 
     /**
      * ---------------------------------------------------------
-     * Item Name
+     * ITEM NAME
      * ---------------------------------------------------------
      */
     protected function itemName(
@@ -960,7 +1092,38 @@ class EscrowApiService
 
     /**
      * ---------------------------------------------------------
-     * Seller Name
+     * LOCATION
+     * ---------------------------------------------------------
+     */
+    protected function location(
+        array $escrow
+    ): ?string {
+
+        $location =
+            $escrow['location']
+            ??
+            null;
+
+
+        if (
+            $location === null
+            ||
+            trim((string)$location) === ''
+        ) {
+
+            return null;
+        }
+
+
+        return trim(
+            (string)$location
+        );
+    }
+
+
+    /**
+     * ---------------------------------------------------------
+     * SELLER NAME
      * ---------------------------------------------------------
      */
     protected function sellerName(
@@ -968,7 +1131,6 @@ class EscrowApiService
     ): ?string {
 
         if (!$seller) {
-
             return null;
         }
 
@@ -999,7 +1161,7 @@ class EscrowApiService
 
     /**
      * ---------------------------------------------------------
-     * Seller Verification
+     * SELLER VERIFIED
      * ---------------------------------------------------------
      */
     protected function sellerVerified(
@@ -1007,16 +1169,9 @@ class EscrowApiService
     ): bool {
 
         if (!$seller) {
-
             return false;
         }
 
-
-        /*
-        |--------------------------------------------------------------------------
-        | Use existing verification field when available.
-        |--------------------------------------------------------------------------
-        */
 
         if (
             array_key_exists(
@@ -1039,12 +1194,6 @@ class EscrowApiService
             return (bool)$seller['is_verified'];
         }
 
-
-        /*
-        |--------------------------------------------------------------------------
-        | Do not assume verification.
-        |--------------------------------------------------------------------------
-        */
 
         return false;
     }
