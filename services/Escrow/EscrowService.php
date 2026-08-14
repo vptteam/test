@@ -8,7 +8,7 @@ use Core\Database;
 use Core\Logger;
 use Models\Listing;
 use Models\User;
-use Modules\Escrow\Models\Escrow;
+use Models\Escrow;
 use Services\Payments\PaystackGateway;
 use Throwable;
 
@@ -1721,6 +1721,49 @@ public function initializePayment(
                 'escrow_id' =>
                     $escrowId
             ];
+        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Persist Paystack reference
+        |--------------------------------------------------------------------------
+        |
+        | Initialization does not mark the escrow paid, but the exact Paystack
+        | reference must be stored so payment-status, duplicate protection and
+        | webhook reconciliation all use the same identifier.
+        |--------------------------------------------------------------------------
+        */
+
+        if ($returnedPaymentReference !== '') {
+            $stored = $this->escrowModel->update(
+                $escrowId,
+                [
+                    'payment_reference' => $returnedPaymentReference,
+                    'payment_method' => 'paystack',
+                ]
+            );
+
+            Logger::write('escrow_service', [
+                'step' => 'PAYMENT_REFERENCE_PERSISTED',
+                'escrow_id' => $escrowId,
+                'escrow_reference' => $reference,
+                'payment_reference' => $returnedPaymentReference,
+                'result' => $stored,
+            ]);
+
+            if (!$stored) {
+                return [
+                    'success' => false,
+                    'message' => 'Unable to save the Paystack payment reference.',
+                    'reference' => $reference,
+                    'payment_reference' => $returnedPaymentReference,
+                    'escrow_id' => $escrowId,
+                ];
+            }
+
+            $escrow['payment_reference'] = $returnedPaymentReference;
+            $escrow['payment_method'] = 'paystack';
         }
 
 

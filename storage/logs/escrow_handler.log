@@ -1,6 +1,0 @@
-[2026-08-12 07:02:43] {"step":"START","user_id":33,"listing_reference":"SDM-000037"}
-[2026-08-12 07:02:43] {"step":"ESCROW_CREATE_RESULT","listing_reference":"SDM-000037","user_id":33,"result_type":"array","result":{"id":10,"reference":"ESC202608126D0D2832","listing_id":37,"buyer_id":33,"seller_id":30,"buyer_phone":"5684672824","seller_phone":"6331755807","buyer_email":null,"seller_email":null,"release_code":"D4302B","amount":"100.00","escrow_fee":"5.00","paystack_fee":"0.00","seller_amount":"95.00","total_amount":"105.00","currency":"NGN","payment_method":"paystack","delivery_type":"digital","payment_reference":null,"payout_reference":null,"payout_paid_at":null,"status":"pending","buyer_confirmed_at":null,"seller_confirmed_at":null,"released_at":null,"cancelled_at":null,"expires_at":"2026-08-26 07:02:43","created_at":"2026-08-12 06:02:43","updated_at":"2026-08-12 06:02:43"}}
-[2026-08-12 07:02:43] {"step":"CREATED","escrow_id":10,"reference":"ESC202608126D0D2832","buyer_id":33,"seller_id":30,"listing_id":37,"amount":"100.00"}
-[2026-08-12 07:02:43] {"step":"PAYMENT_START","reference":"ESC202608126D0D2832","amount":"100.00"}
-[2026-08-12 07:02:43] {"step":"PAYMENT_READY","reference":"ESC202608126D0D2832","payment_reference":"ESC202608126D0D2832","updated":true}
-[2026-08-12 07:02:43] {"step":"COMPLETE","reference":"ESC202608126D0D2832","buyer_id":33}

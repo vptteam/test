@@ -42,10 +42,13 @@ class Autoloader
                     */
 
                     'Listeners\\Sms\\SmsListener' =>
-                        BASE_PATH . '/listeners/Sms/SMSListener.php',
+                        \BASE_PATH . '/listeners/Sms/SMSListener.php',
 
                     'Listeners\\Sms\\SMSListener' =>
-                        BASE_PATH . '/listeners/Sms/SMSListener.php',
+                        \BASE_PATH . '/listeners/Sms/SMSListener.php',
+
+                    'Services\\SMS\\SmsService' =>
+                        \BASE_PATH . '/services/Sms/SmsService.php',
 
                     /*
                     |--------------------------------------------------------------
@@ -59,7 +62,7 @@ class Autoloader
                     */
 
                     'Listeners\\Ussd\\UssdListener' =>
-                        BASE_PATH . '/listeners/Ussd/UssdListener.php',
+                        \BASE_PATH . '/listeners/Ussd/UssdListener.php',
 
                     /*
                     |--------------------------------------------------------------
@@ -68,7 +71,7 @@ class Autoloader
                     */
 
                     'Listeners\\Sms\\SmsWebhookListener' =>
-                        BASE_PATH . '/listeners/Sms/SmsWebhookListener.php',
+                        \BASE_PATH . '/listeners/Sms/SmsWebhookListener.php',
                 ];
 
 
@@ -124,25 +127,25 @@ class Autoloader
                 $map = [
 
                     'Core\\' =>
-                        BASE_PATH . '/core/',
+                        \BASE_PATH . '/core/',
 
                     'Listeners\\' =>
-                        BASE_PATH . '/listeners/',
+                        \BASE_PATH . '/listeners/',
 
                     'Modules\\' =>
-                        BASE_PATH . '/modules/',
+                        \BASE_PATH . '/modules/',
 
                     'Services\\' =>
-                        BASE_PATH . '/services/',
+                        \BASE_PATH . '/services/',
 
                     'Replies\\' =>
-                        BASE_PATH . '/replies/',
+                        \BASE_PATH . '/replies/',
 
                     'Models\\' =>
-                        BASE_PATH . '/models/',
+                        \BASE_PATH . '/models/',
 
                     'Controllers\\' =>
-                        BASE_PATH . '/controllers/',
+                        \BASE_PATH . '/controllers/',
                 ];
 
 

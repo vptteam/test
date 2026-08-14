@@ -30,7 +30,7 @@ error_reporting(E_ALL);
 
 ini_set(
     'display_errors',
-    '1'
+    (defined('APP_DEBUG') && APP_DEBUG) ? '1' : '0'
 );
 
 

@@ -94,6 +94,18 @@ class TwilioUssdProvider implements USSDProviderInterface
     }
 
 
+    public function configuration(): array
+    {
+        return ['provider' => $this->name(), 'configured' => $this->configured(), 'base_url' => $this->baseUrl, 'phone_number' => $this->phoneNumber];
+    }
+
+
+    public function normalizeRequest(array $payload): array
+    {
+        return $this->normalizeIncoming($payload);
+    }
+
+
     /**
      * ---------------------------------------------------------
      * Normalize Incoming USSD Request
@@ -255,6 +267,24 @@ class TwilioUssdProvider implements USSDProviderInterface
      * We therefore translate the common application response
      * into TwiML.
      */
+    public function response(string $message, bool $continue = false): string
+    {
+        return $this->formatResponse($message, $continue);
+    }
+
+
+    public function continueSession(string $message): string
+    {
+        return $this->formatResponse($message, true);
+    }
+
+
+    public function endSession(string $message): string
+    {
+        return $this->formatResponse($message, false);
+    }
+
+
     public function formatResponse(
         string $message,
         bool $continue = false
@@ -346,7 +376,6 @@ class TwilioUssdProvider implements USSDProviderInterface
             return
                 '<?xml version="1.0" encoding="UTF-8"?>'
 
-```
             .
             '<Response>'
             .
@@ -800,7 +829,6 @@ protected function normalizePhone(
 
     return $phone;
 }
-```
 
 }
 ?>

@@ -77,6 +77,18 @@ class TermiiUssdProvider implements USSDProviderInterface
     }
 
 
+    public function configuration(): array
+    {
+        return ['provider' => $this->name(), 'configured' => $this->configured(), 'base_url' => $this->baseUrl, 'service_code' => $this->serviceCode];
+    }
+
+
+    public function normalizeRequest(array $payload): array
+    {
+        return $this->normalizeIncoming($payload);
+    }
+
+
     /**
      * ---------------------------------------------------------
      * Normalize Incoming Request
@@ -227,6 +239,24 @@ class TermiiUssdProvider implements USSDProviderInterface
      * Format USSD Response
      * ---------------------------------------------------------
      */
+    public function response(string $message, bool $continue = false): string
+    {
+        return $this->formatResponse($message, $continue);
+    }
+
+
+    public function continueSession(string $message): string
+    {
+        return $this->formatResponse($message, true);
+    }
+
+
+    public function endSession(string $message): string
+    {
+        return $this->formatResponse($message, false);
+    }
+
+
     public function formatResponse(
         string $message,
         bool $continue = false

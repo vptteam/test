@@ -1024,6 +1024,9 @@ class WebListener
                 '/api/escrow/payment/status' =>
                     'paymentStatus',
 
+                '/api/escrow/payment/callback' =>
+                    'callback',
+
             ];
 
 
@@ -1156,10 +1159,11 @@ class WebListener
             }
 
 
-            $result =
-                $controller->{$method}(
-                    $payload
-                );
+            /*
+             * EscrowApiController methods read the HTTP request themselves.
+             * Do not pass an argument to their no-argument public endpoints.
+             */
+            $result = $controller->{$method}();
 
 
             if (

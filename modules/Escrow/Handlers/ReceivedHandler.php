@@ -286,7 +286,7 @@ class ReceivedHandler
             |--------------------------------------------------------------------------
             */
 
-            if ($status === 'awaiting_payout') {
+            if (in_array($status, ['buyer_confirmed', 'awaiting_payout'], true)) {
 
                 Logger::write(
                     'escrow_received',

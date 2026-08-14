@@ -21,6 +21,7 @@ class Escrow
         'paid',
         'item_sent',
         'awaiting_payout',
+        'buyer_confirmed',
         'completed',
         'cancelled',
     ];
@@ -32,6 +33,7 @@ class Escrow
         'paid',
         'item_sent',
         'awaiting_payout',
+        'buyer_confirmed',
         'completed',
     ];
 
@@ -1566,7 +1568,7 @@ class Escrow
                         date('Y-m-d H:i:s'),
 
                     'status' =>
-                        'awaiting_payout',
+                        'buyer_confirmed',
                 ]
             );
 

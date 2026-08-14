@@ -93,10 +93,13 @@ class Escrow
             $sellerAmount =
                 (float)($data['seller_amount'] ?? 0);
 
-            $releaseCode =
-                trim(
-                    (string)($data['release_code'] ?? '')
-                );
+            $releaseCode = trim((string)($data['release_code'] ?? ''));
+
+            /* Generate the internal release code when the service does not
+             * provide one. It is never exposed by public API responses. */
+            if ($releaseCode === '') {
+                $releaseCode = (string)random_int(100000, 999999);
+            }
 
             if (
                 $reference === ''
@@ -104,7 +107,6 @@ class Escrow
                 || $buyerId <= 0
                 || $sellerId <= 0
                 || $amount <= 0
-                || $releaseCode === ''
             ) {
 
                 Logger::write(

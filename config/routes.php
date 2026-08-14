@@ -205,6 +205,13 @@ return [
         EscrowPaystackWebhookListener::class,
 
 
+    '/payment/paystack/escrow/callback' =>
+    [
+        EscrowApiController::class,
+        'callback',
+    ],
+
+
     /*
     |--------------------------------------------------------------------------
     | ESCROW API

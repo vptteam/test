@@ -128,15 +128,11 @@ class EscrowCompletionService
             |--------------------------------------------------------------------------
             */
 
-            if (
-
-                ($escrow['status'] ?? '')
-
-                !==
-
-                'awaiting_payout'
-
-            ) {
+            if (!in_array(
+                ($escrow['status'] ?? ''),
+                ['buyer_confirmed', 'awaiting_payout'],
+                true
+            )) {
 
                 Logger::write(
 

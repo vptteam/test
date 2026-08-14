@@ -88,6 +88,18 @@ class ArkeselUssdProvider implements USSDProviderInterface
     }
 
 
+    public function configuration(): array
+    {
+        return ['provider' => $this->name(), 'configured' => $this->configured(), 'base_url' => $this->baseUrl, 'service_code' => $this->serviceCode, 'sender_id' => $this->senderId];
+    }
+
+
+    public function normalizeRequest(array $payload): array
+    {
+        return $this->normalizeIncoming($payload);
+    }
+
+
     /**
      * ---------------------------------------------------------
      * Normalize Incoming Request
@@ -332,6 +344,24 @@ class ArkeselUssdProvider implements USSDProviderInterface
             ($continue ? 'CON ' : 'END ')
             .
             $message;
+    }
+
+
+    public function response(string $message, bool $continue = false): string
+    {
+        return $this->formatResponse($message, $continue);
+    }
+
+
+    public function continueSession(string $message): string
+    {
+        return $this->formatResponse($message, true);
+    }
+
+
+    public function endSession(string $message): string
+    {
+        return $this->formatResponse($message, false);
     }
 
 

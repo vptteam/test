@@ -531,6 +531,8 @@ class AdminEscrowHandler
 
                     [
 
+                        'buyer_confirmed',
+
                         'awaiting_payout',
 
                         'received',
