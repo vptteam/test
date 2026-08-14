@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Listeners\Payments;
 
 use Core\Logger;
-use Services\Payments\PaystackEscrowPaymentService;
+use Services\Escrow\PaystackEscrowPaymentService;
 use Services\Payments\PaystackGateway;
 use Throwable;
 
